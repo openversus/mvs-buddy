@@ -67,6 +67,17 @@ public sealed class InstallChanges
     }
 
     /// <summary>
+    /// A clean start: holds <paramref name="extras"/> (from <see cref="StockCheck"/>, all of them or the person's pick) as one
+    /// set named for the time, leaving the game's folder as the game shipped it. Restoring the set puts every file back.
+    /// </summary>
+    public ChangePlan HoldNotStock(InstallState state, IEnumerable<StockExtra> extras)
+    {
+        Require(state);
+        var files = (extras ?? throw new ArgumentNullException(nameof(extras))).Select(e => (e.Path, e.Path)).ToList();
+        return Hold(state, $"Not stock {DateTimeOffset.Now:yyyy-MM-dd HHmmss}", files, "Nothing was picked to set aside.");
+    }
+
+    /// <summary>
     /// Puts a held set back. Refused, with nothing touched, when a file is already where one of the set's would go (the
     /// mod was installed again since it was held, say).
     /// </summary>
@@ -112,19 +123,29 @@ public sealed class InstallChanges
         return plan;
     }
 
+    /// <summary>A plan with nothing in it yet, for other planners to fill.</summary>
+    internal ChangePlan NewPlan() => new(host, log);
+
     private ChangePlan Hold(InstallState state, string set, IReadOnlyList<(string Original, string RestoreTo)> files, string nothing)
     {
         var plan = new ChangePlan(host, log);
-        string? folder = held.SetFolder(state.Game, set);
-        if (folder == null)
-        {
-            plan.Refuse(() => "The buddy has no folder of its own in the profile to hold files in.");
-            return plan;
-        }
         if (files.Count == 0)
         {
             plan.Refuse(() => nothing);
             return plan;
+        }
+        AddHold(plan, state, set, files);
+        return plan;
+    }
+
+    /// <summary>Adds holding <paramref name="files"/> as <paramref name="set"/> to <paramref name="plan"/>: the moves, then the manifest.</summary>
+    internal void AddHold(ChangePlan plan, InstallState state, string set, IReadOnlyList<(string Original, string RestoreTo)> files)
+    {
+        string? folder = held.SetFolder(state.Game, set);
+        if (folder == null)
+        {
+            plan.Refuse(() => "The buddy has no folder of its own in the profile to hold files in.");
+            return;
         }
         plan.Refuse(() => Directory.Exists(folder)
             ? $"{set} is already held for this copy of the game; restore or discard it first."
@@ -143,11 +164,10 @@ public sealed class InstallChanges
         {
             plan.CleanUp(from, StopAt(state, from));
         }
-        return plan;
     }
 
     // Emptied folders are removed up to, not including: the saved paks folder, plugins/ (other mods use it), the Win64
-    // folder, or the game's folder.
+    // folder, the game's project folder, or the game's install folder; anything elsewhere is left as it is.
     private static string StopAt(InstallState state, string folder)
     {
         string win64 = state.Game.Win64Directory;
@@ -160,7 +180,17 @@ public sealed class InstallChanges
         {
             return plugins;
         }
-        return IsAtOrUnder(folder, win64) ? win64 : Path.GetFullPath(Path.Combine(win64, "..", ".."));
+        if (IsAtOrUnder(folder, win64))
+        {
+            return win64;
+        }
+        string game = Path.GetFullPath(Path.Combine(win64, "..", ".."));
+        if (IsAtOrUnder(folder, game))
+        {
+            return game;
+        }
+        string installRoot = Path.GetFullPath(Path.Combine(game, ".."));
+        return IsAtOrUnder(folder, installRoot) ? installRoot : folder;
     }
 
     private static bool IsAtOrUnder(string path, string folder)

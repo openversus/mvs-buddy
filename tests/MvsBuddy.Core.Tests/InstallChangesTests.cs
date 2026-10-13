@@ -158,9 +158,12 @@ public sealed class InstallChangesTests : IDisposable
         Assert.Contains(after.Notes, n => n.Contains("MVS Infinite") && n.Contains("cannot run alongside"));
     }
 
-    [Fact]
+    // Locks a folder with Unix file modes, which Windows does not have.
+    [SkippableFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
     public void A_step_that_fails_part_way_puts_back_every_step_before_it()
     {
+        Skip.IfNot(OperatingSystem.IsLinux(), "locks a folder with Unix file modes");
         var files = InstallOpenVersus();
         // The Windows node's folder cannot be written, so its file cannot be moved out of it; it is held after the
         // plugin, the settings and the Linux node, which must all come back.

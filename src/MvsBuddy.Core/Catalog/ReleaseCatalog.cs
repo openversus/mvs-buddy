@@ -90,6 +90,27 @@ public sealed class ReleaseCatalog
         return files;
     }
 
+    /// <summary>
+    /// The text of a file in the mod's repository at <paramref name="tag"/> (such as <c>sample.toml</c>, the defaults of
+    /// that version), or null when it cannot be had. Nothing depends on it being there.
+    /// </summary>
+    public async Task<string?> FileAtTagAsync(string tag, string path, CancellationToken cancellationToken = default)
+    {
+        var url = new Uri($"https://raw.githubusercontent.com/{clientReleases.Owner}/{clientReleases.Name}/{Uri.EscapeDataString(tag)}/{path}");
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("mvs-buddy", BuddyVersion.Current));
+            using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync().ConfigureAwait(false) : null;
+        }
+        catch (Exception e) when (e is HttpRequestException || (e is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            log.LogInformation("{Url} could not be had: {Reason}", url, e.Message);
+            return null;
+        }
+    }
+
     private static bool IsPak(ReleaseAsset asset) =>
         PakExtensions.Any(extension => asset.Name.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
 

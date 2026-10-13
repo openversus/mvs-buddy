@@ -1,0 +1,3 @@
+Engine/Content/Slate/Automation/DeveloperDirectoryContent.png	2023-12-13T20:35:42.826Z
+Engine/Content/Slate/Automation/EditorGroupBorder.png	2023-12-13T20:35:42.828Z
+Engine/Content/Slate/Automation/ErrorFilter.png	2023-12-13T20:35:42.832Z

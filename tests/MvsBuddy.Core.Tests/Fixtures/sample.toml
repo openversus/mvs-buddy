@@ -1,0 +1,219 @@
+# OpenVersus settings.
+#
+# This file is read each time the game starts, so edit it with the game closed.
+#
+# Text goes in double quotes ("like this"); true, false and numbers don't. A line starting
+# with # is a comment, and so is anything after a # at the end of a line.
+#
+# If this file has a mistake in it, the mod runs on default settings, leaves the file as it
+# is, and tells you in the game (and in logs/OpenVersus.log) which line and column to fix.
+# Delete this file and the mod writes a fresh one like it on the next launch.
+
+# ---------------------------------------------------------------------------
+# General settings.
+# ---------------------------------------------------------------------------
+[Settings]
+
+# TL;DR: How much goes into logs/OpenVersus.log. "info" is right for almost everyone.
+#
+# A name in quotes: "trace", "debug", "info", "warn", "error", "critical" or "none"; or a
+# number from 1 (debug) to 6 (none). 0 means: decide from DebugLogging under [Settings.Debug].
+LogLevel = "info"
+
+# Installs the keyboard hook. For now it only notes F1 presses in the log.
+EnableKeyboardHotkeys = true
+
+# TL;DR: Keeps the mod up to date by itself.
+#
+# At launch, asks the OpenVersus server whether there is a newer version of the mod. If
+# there is, it is downloaded and installed, and the game closes so the next launch runs it.
+AutoUpdate = true
+
+# ---------------------------------------------------------------------------
+# Keys. Nothing reads these yet.
+# ---------------------------------------------------------------------------
+[Settings.Keybinds]
+
+# Kept so older settings files keep their meaning; nothing uses it.
+ToggleMenu = "F1"
+
+# ---------------------------------------------------------------------------
+# Changes the mod makes to the game itself.
+# ---------------------------------------------------------------------------
+[Patches]
+
+# TL;DR: Needed for online play. Leave it on.
+#
+# The game switches its online features off after its official end-of-service date. This
+# makes that check always answer "not yet".
+SunsetDate = true
+
+# TL;DR: Lets custom content load, like skins that replace an existing skin or emote.
+#
+# Skips the game's signature check, so .pak and .utoc/.ucas files with invalid signatures load.
+PakLoader = true
+
+# TL;DR: Everyone sees what the winner does after the final stock again.
+#
+# A match lingers for a few seconds after it is won. An official update made the losers
+# and spectators stop seeing anything the winner does in that time: to them the winner just
+# stands still. This puts it back the way it was at launch.
+PostMatchFreeze = true
+
+# For profiling; leave it off. Instead of patching the end-of-service check, patches every
+# place in the game that calls it (about 146), so it is never called at all. Needs SunsetDate.
+SunsetCallers = false
+
+# ---------------------------------------------------------------------------
+# Parts of the game the mod hooks into. The defaults are what you want.
+# ---------------------------------------------------------------------------
+[Features]
+
+# Finds the engine functions the mod calls into. The dialogs, notifications and NetStats need it.
+HookUE = true
+
+# Finds the game's dialog functions, which the mod's in-game dialogs use.
+Dialog = true
+
+# Finds the game's notification functions, which show the mod's toasts ("OpenVersus Loaded",
+# settings problems) and announcements from the OpenVersus server.
+Notifications = true
+
+# TL;DR: Logs network stats for every match, for troubleshooting connections.
+#
+# Once a second during a match, writes the rollback session's statistics to a log in logs/,
+# one file per match, named for the match and your opponents.
+NetStats = false
+
+# TL;DR: Needed for matches that run directly between players. Leave it on.
+#
+# Starts the OpenVersus rollback node, a small program that runs beside the game and
+# closes with it. When the server runs a match on the players' own machines instead of
+# on a server, the game connects to this node. Without it, those matches can't be played.
+RollbackNode = true
+
+# ---------------------------------------------------------------------------
+# Byte patterns the mod uses to find things in the game, made for the game's final patch.
+# Don't change these unless you know exactly why; a wrong one can break the feature it belongs to.
+# ---------------------------------------------------------------------------
+[Patterns]
+
+# The pak signature check (PakLoader).
+SigCheck = "48 8D 0D ? ? ? ? E9 ? ? ? ? CC CC CC CC 48 83 EC 28 E8 ? ? ? ? 48 89 05 ? ? ? ? 48 83 C4 28 C3 CC CC CC CC CC CC CC CC CC CC CC 48 8D 0D ? ? ? ? E9 ? ? ? ? CC CC CC CC 48 8D 0D ? ? ? ? E9 ? ? ? ? CC CC CC CC"
+
+# Where the game stores its game-server address ([Server.Game]).
+EndpointLoader = "48 8b cb 48 8d 15 ? ? ? ? E8 ? ? ? ? 48 8b 4c 24 ? 48 85 c9 74 05 E8 ? ? ? ? 48 8b c3 48 8b 5c 24"
+
+# Where the game stores its WB network address ([Server.Prod]).
+ProdEndpointLoader = "49 ? ? 48 8d 15 ? ? ? ? E8 ? ? ? ? 49 ? ? ? ? 00 00 48 8b"
+
+# The end-of-service check (SunsetDate).
+SunsetDate = "48 8d 0d ? ? ? ? e8 ? ? ? ? 83 3D ? ? ? ? FF 75 ? 89 7C"
+
+# ---------------------------------------------------------------------------
+# More byte patterns: Unreal Engine functions.
+# ---------------------------------------------------------------------------
+[Patterns.UE]
+
+# The engine's text and name functions.
+FText = "4C 8B ? E8 ? ? ? ? 4C 8D ? ? ? ? ? 4C 8B ? 4C 8D ? ? ? ? ? 48 8D ? ? ? ? ? 48 8D ? ? E8 ? ? ? ? 48 8B ? 48 8D ? 00 E8 ? ? ? ? 49 8B ? 00 4C 8B ? 48 89 ? ? ? 00 00 49 8B ? ? C7 85 ? ? ? ? 04 00 00 00"
+
+# The engine's name constructor.
+CFName = "4C 8D 9C ? ? ? ? ? 49 8B ? ? 49 8B ? ? 4D 8B ? ? 4D 8B ? ? 41 ? ? ? ? 49 8B ? ? C3 48 8D ? ? ? ? ? E8 ? ? ? ? 83 3D ? ? ? ? FF 0F 85 ? ? ? ? 41 B8 01 00 00 00 48 8D ? ? ? ? ? 48 8D ? ? ? ? ? E8 ? ? ? ? 48 8D ? ? ? ? ? E8 ? ? ? ? E9 ? ? ? ? CC CC CC CC CC CC CC CC"
+
+# The engine's wide-character name constructor.
+WCFName = "48 85 ? 74 1E 0F ? ? 66 85 C0 74 16 0F ? ?"
+
+# ---------------------------------------------------------------------------
+# More byte patterns: MultiVersus functions.
+# ---------------------------------------------------------------------------
+[Patterns.MVS]
+
+# The game's function that opens a dialog.
+Dialog = "40 ? 48 83 ? ? 48 ? ? E8 ? ? ? ? 48 85 ? 75 ? 48 8B ? 48"
+
+# The game's dialog settings.
+DialogParams = "48 89 ? ? ? 48 89 ? ? ? 48 89 ? ? ? 48 89 ? ? ? 41 ? 48 83 ? ? 41 0F ? ? 48 ? ? 48 ? ? E8 ? ? ? ? 48"
+
+# What connects a dialog button to what it does.
+DialogCallback = "E8 ? ? ? ? 48 8D 15 ? ? ? ? 48 8D 4C ? ? E8 ? ? ? ? 4C ? ? ? ? C6 ? ? ? 00 48 8D ? ? ? 49 8B CE"
+
+# The game's quit function, for dialogs that offer to quit.
+QuitGameCallback = "40 ? 48 83 ? ? 48 8B ? 48 83 ? ? E8 ? ? ? ? 84 C0 74 19 48 8B ? ? 45 33 C9 45 33 C0"
+
+# Where the game creates its game instance.
+FighterInstance = "48 8D 05 ? ? ? 00 49 89 ? ? 48 8D ? ? ? ? ? 49 89 ? ? 49 C7 ? ? 00 00 00 00 C7 44 ? ? 08 00 00 10 C7 44 ? ? 08 00 00 00 C7 44 ? ? 70 08 00 00"
+
+# The game's function that shows a toast notification.
+Notifications = "FF 50 ? F3 0F 10 ? ? ? ? ? 48 8B ? F3 0F ? ? ? E8"
+
+# The post-match freeze (PostMatchFreeze).
+PostMatchFreeze = "45 3B F8 75 11 0F B6 83 F1 05 00 00 2C 07 3C 02 0F 86 ? ? ? ?"
+
+# ---------------------------------------------------------------------------
+# For troubleshooting and development. The defaults are what you want.
+# ---------------------------------------------------------------------------
+[Settings.Debug]
+
+# Opens a console window beside the game, showing the log as it is written.
+ShowConsole = true
+
+# Holds startup at a message box until you click OK (handy for attaching a debugger).
+DebugPause = false
+
+# With LogLevel = 0, logs at debug level. Otherwise it does nothing.
+DebugLogging = false
+
+# Silences the warning shown when the mod is loaded by something that isn't MultiVersus.
+NonMVSPatching = false
+
+# For profiling; leave it off. Counts calls to the end-of-service check and logs them once a minute.
+CountSunsetCalls = false
+
+# For testing updates from a fork; leave it. Game content only downloads from this GitHub account's releases.
+ReleaseOwner = "openversus"
+
+# For testing match rules; leave it off. Writes logs/MatchRules.log: each match's settings, stock-rule deaths and every friendly-fire hit.
+MatchRulesLog = false
+
+# For testing; leave it off. Friendly fire in offline matches (Local Play, the Lab) without the mutator. Online matches only ever get it from the server.
+FriendlyFireOffline = false
+
+# For testing; leave it at 100. Game speed in percent for offline matches (Local Play, the Lab): 120 runs them 20% faster. Online matches are never changed.
+LabGameSpeedPercent = 100
+
+# ---------------------------------------------------------------------------
+# The OpenVersus server. Leave this section alone unless you run your own server.
+# ---------------------------------------------------------------------------
+[Server.Game]
+
+# TL;DR: The OpenVersus server.
+#
+# The game's own server connection goes here, and so do the mod's update check, server
+# announcements and registration.
+ServerUrl = "https://prod.openversus.org/"
+
+# Points the game's server connection at ServerUrl above, and checks for announcements.
+# Off means the game tries its original servers, which no longer exist.
+Enabled = true
+
+# TL;DR: Where the rollback node finds the other player for a match run between players. Leave it.
+#
+# A host name (or an IP address). The OpenVersus server points this name wherever the
+# service runs. Empty turns direct matches off: every such match goes through an OpenVersus
+# relay instead.
+P2PRegistry = "p2p.openversus.org"
+
+# The UDP port of that service.
+P2PRegistryPort = 41235
+
+# ---------------------------------------------------------------------------
+# The server the game's WB network connection goes to. Same advice as above.
+# ---------------------------------------------------------------------------
+[Server.Prod]
+
+# Where the game's WB network connection goes.
+ServerUrl = "https://prod.openversus.org/"
+
+# Points the game's WB network connection at ServerUrl above.
+Enabled = true
