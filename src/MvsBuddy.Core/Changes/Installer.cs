@@ -36,10 +36,13 @@ public sealed class PreparedInstall
     public IReadOnlyList<string> Summary { get; }
 }
 
-/// <summary>Files an install has staged: the release's plugin folder, its paks, the loader and its license.</summary>
+/// <summary>
+/// Files an install has staged: the release's plugin folder, its paks (a null path for one whose installed copy already
+/// matches, which was not downloaded), the loader and its license.
+/// </summary>
 internal sealed record StagedInstall(
     string Extracted,
-    IReadOnlyList<(string Name, string Path, string Sha256)> Paks,
+    IReadOnlyList<(string Name, string? Path, string Sha256)> Paks,
     string LoaderDll,
     string LoaderLicense,
     string? InstalledDefaults);
@@ -90,9 +93,20 @@ public sealed class Installer
         string zip = await downloads.FetchAsync(zipAsset, null, cancellationToken).ConfigureAwait(false);
         string extracted = ExtractPluginFolder(zip);
 
-        var paks = new List<(string, string, string)>();
+        var paks = new List<(string, string?, string)>();
         foreach (var asset in await catalog.PaksForAsync(release, cancellationToken).ConfigureAwait(false))
         {
+            // Not downloaded when the installed copy is already this one: same size, then same checksum as GitHub's.
+            string? installed = state.SavedPaksDirectory == null ? null : Path.Combine(state.SavedPaksDirectory, asset.Name);
+            if (asset.Sha256 != null && installed != null && File.Exists(installed) && new FileInfo(installed).Length == asset.Size)
+            {
+                progress?.Report($"Checking {asset.Name}");
+                if (Downloads.Sha256Of(installed) == asset.Sha256)
+                {
+                    paks.Add((asset.Name, null, asset.Sha256));
+                    continue;
+                }
+            }
             progress?.Report($"Downloading {asset.Name}");
             string path = await downloads.FetchAsync(asset, null, cancellationToken).ConfigureAwait(false);
             paks.Add((asset.Name, path, asset.Sha256 ?? Downloads.Sha256Of(path)));
@@ -254,6 +268,10 @@ public sealed class Installer
             foreach (var (name, path, sha) in staged.Paks)
             {
                 string target = Path.Combine(state.SavedPaksDirectory, name);
+                if (path == null)
+                {
+                    continue;
+                }
                 if (File.Exists(target))
                 {
                     if (Downloads.Sha256Of(target) == sha)
@@ -263,6 +281,8 @@ public sealed class Installer
                     backup.Add(target);
                 }
                 moves.Add((path, target));
+                // The paks leave the download cache as they go in; the client zip and the loader stay cached.
+                plan.CleanUp(Path.GetDirectoryName(path)!, Path.Combine(host.DataDirectory, "downloads"));
                 paksMoved++;
             }
             backup.AddRange(state.Paks.Where(p => !names.Contains(p.Name)).Select(p => p.Path));
@@ -274,13 +294,21 @@ public sealed class Installer
             summary.Add($"{state.PaksInGame.Count} OpenVersus paks found in the game's own folders are set aside; the checked copies go where the mod keeps them.");
         }
 
+        // Every install keeps a set that undoes it: what it replaces or retires, and the list of what it puts in place.
         var distinctBackup = backup.Distinct().ToList();
-        if (distinctBackup.Count > 0)
+        var placed = moves.Select(m => m.To)
+            .Concat(writeLoader ? [Path.Combine(win64, loaderName)] : [])
+            .Concat(writeLicense ? [licenseTarget] : [])
+            .Concat(merge != null ? [theirsPath] : [])
+            .Distinct().ToList();
+        string set = $"Before {version} {DateTimeOffset.Now:yyyy-MM-dd HHmmss}";
+        changes.AddHold(plan, state, set, distinctBackup.Select(f => (f, f)).ToList(), placed);
+        summary.Add(distinctBackup.Count switch
         {
-            string set = $"Before {version} {DateTimeOffset.Now:yyyy-MM-dd HHmmss}";
-            changes.AddHold(plan, state, set, distinctBackup.Select(f => (f, f)).ToList());
-            summary.Add($"{distinctBackup.Count} files it replaces or retires are kept as \"{set}\", which can be restored.");
-        }
+            0 => $"Restoring \"{set}\" undoes this install.",
+            1 => $"1 file it replaces or retires is kept as \"{set}\"; restoring that undoes this install.",
+            _ => $"{distinctBackup.Count} files it replaces or retires are kept as \"{set}\"; restoring that undoes this install.",
+        });
         foreach (var (source, target) in moves)
         {
             plan.Move(source, target);
@@ -299,7 +327,7 @@ public sealed class Installer
         }
         if (unchanged > 0)
         {
-            summary.Add($"{unchanged} of the release's files are already in place.");
+            summary.Add(unchanged == 1 ? "1 of the release's files is already in place." : $"{unchanged} of the release's files are already in place.");
         }
         log.LogInformation("Planned {Release} over {Folder}: {Summary}", release.Tag, win64, string.Join(" | ", summary));
         return new PreparedInstall(release, plan, merge, summary);

@@ -114,12 +114,30 @@ public sealed class InstallReader
         {
             notes.Add("The buddy cannot tell which Wine prefix this copy runs in, so it cannot see the mod's paks.");
         }
+        // Asked of the system on every read, since a game update or a reinstall can put a folder's permissions back.
+        var mayChange = new List<string> { win64 };
+        if (game.Verified)
+        {
+            mayChange.Add(Path.Combine(game_, "Content", "Paks"));
+            mayChange.Add(Path.GetFullPath(Path.Combine(game_, "..")));
+        }
+        if (savedPaks != null)
+        {
+            mayChange.Add(savedPaks);
+        }
+        var denied = mayChange.Where(host.ChangeDeniedIn).ToList();
+        if (denied.Count > 0)
+        {
+            notes.Add($"This account is not allowed to change files in {string.Join(", ", denied)}.");
+        }
         var held = new Changes.HeldArea(host).Read(game);
         foreach (var set in held)
         {
             notes.Add(!set.IsRecorded
                 ? $"Files from a hold that did not finish are in {set.Folder}; the originals were never moved away, so these can be discarded."
-                : $"{set.Name} is held aside ({set.Entries.Count(e => e.IsHeld)} files); restore it to use it again.");
+                : set.Placed.Count > 0
+                    ? $"{set.Name} can be restored to undo that install ({set.Entries.Count(e => e.IsHeld)} files kept from before it)."
+                    : $"{set.Name} is held aside ({set.Entries.Count(e => e.IsHeld)} files); restore it to use it again.");
         }
 
         var state = new InstallState
@@ -133,6 +151,7 @@ public sealed class InstallReader
             OtherPaks = otherPaks,
             OtherPlugins = others,
             Held = held,
+            DeniedFolders = denied,
             Notes = notes,
         };
         log.LogInformation("{Folder}: {Status}, {Layout} layout {Version}, loaders [{Loaders}], other plugins [{Others}], {Paks} paks in {SavedPaks}",

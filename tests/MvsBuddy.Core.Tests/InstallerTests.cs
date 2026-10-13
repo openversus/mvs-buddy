@@ -57,7 +57,7 @@ public sealed class InstallerTests : IDisposable
         {
             tree.File(text, [.. Rel(stage), "extracted", "plugins", "OpenVersus", .. name.Split('/')]);
         }
-        var staged = paks.Select(p => (p.Key, tree.File(p.Value, [.. Rel(stage), "paks", p.Key]), Sha(Encoding.UTF8.GetBytes(p.Value)))).ToList();
+        var staged = paks.Select(p => (p.Key, (string?)tree.File(p.Value, [.. Rel(stage), "paks", p.Key]), Sha(Encoding.UTF8.GetBytes(p.Value)))).ToList();
         return new StagedInstall(Path.Combine(stage, "extracted"), staged,
             tree.Bytes(LoaderDll, [.. Rel(stage), "loader", "dinput8.dll"]), tree.Bytes(License, [.. Rel(stage), "license", Installer.LicenseName]), defaults);
     }
@@ -267,6 +267,111 @@ public sealed class InstallerTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Win64, "readme.txt")));
         Assert.Null(after.Mod.Settings);
         Assert.Equal(["OVS_P.pak"], after.Paks.Select(p => p.Name));
+    }
+
+    // Every file in the library (the game) and the prefix (the paks), as "path checksum" lines.
+    private List<string> Snapshot(params string[] extra) =>
+        Directory.EnumerateFiles(tree.Path("steamapps"), "*", SearchOption.AllDirectories)
+            .Select(f => $"{Path.GetRelativePath(tree.Root, f)} {Sha(File.ReadAllBytes(f))}")
+            .Concat(extra).Order(StringComparer.Ordinal).ToList();
+
+    [Fact]
+    public void Restoring_the_set_an_update_kept_puts_the_copy_back_as_it_was_before_the_update()
+    {
+        Season1Installed();
+        Game();
+        tree.File("pak 12", [.. Rel(SavedPaks), "OVS_P.pak"]);
+        tree.File("same", [.. Rel(SavedPaks), "OVS_Same_P.pak"]);
+        tree.File("stale", [.. Rel(SavedPaks), "OVS_Old_P.pak"]);
+        string home = Path.Combine(Win64, "plugins", "OpenVersus");
+        string cache = Path.Combine(home, "PatternsCache.toml");
+        var before = Snapshot($"{Path.GetRelativePath(tree.Root, cache)} {Sha(Encoding.UTF8.GetBytes("cache"))}");
+        var buddy = Buddy();
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13", ["OVS_Same_P.pak"] = "same" }),
+            new InstallOptions()).Plan.Apply();
+        // Then the mod runs: it writes a cache it did not have, and updates itself to a version with a new file name.
+        File.WriteAllText(cache, "cache");
+        File.Move(Path.Combine(home, "OpenVersus_2026.10.13.01.asi"), Path.Combine(home, "OpenVersus_2026.10.14.01.asi"));
+        var state = buddy.Installs.Read(Game());
+        var undo = Assert.Single(state.Held);
+
+        buddy.Changes.Restore(state, undo.Name).Apply();
+
+        // As before the update, plus the cache the mod made since, which the update never touched.
+        Assert.Equal(before, Snapshot());
+        Assert.Empty(buddy.Installs.Read(Game()).Held);
+        Assert.False(Directory.Exists(undo.Folder));
+    }
+
+    [Fact]
+    public void Restoring_the_set_a_fresh_install_kept_takes_the_install_away()
+    {
+        Game();
+        var before = Snapshot();
+        var buddy = Buddy();
+        var install = buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions());
+        install.Plan.Apply();
+        var state = buddy.Installs.Read(Game());
+        Assert.Equal(InstallStatus.Installed, state.Status);
+        Assert.Contains(install.Summary, s => s.Contains("undoes this install", StringComparison.Ordinal));
+
+        buddy.Changes.Restore(state, Assert.Single(state.Held).Name).Apply();
+
+        Assert.Equal(before, Snapshot());
+        Assert.Equal(InstallStatus.NotInstalled, buddy.Installs.Read(Game()).Status);
+    }
+
+    [Fact]
+    public void A_file_the_buddy_did_not_put_where_a_kept_one_goes_refuses_the_undo()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), []), new InstallOptions()).Plan.Apply();
+        string old = Path.Combine(Win64, "plugins", "OpenVersus", "OpenVersus_2026.10.12.01.asi");
+        File.WriteAllText(old, "someone else's");
+        var after = Snapshot();
+        var state = buddy.Installs.Read(Game());
+
+        var e = Assert.Throws<ChangeException>(buddy.Changes.Restore(state, Assert.Single(state.Held).Name).Apply);
+
+        Assert.Contains(old, e.Message);
+        Assert.Equal(after, Snapshot());
+    }
+
+    [Fact]
+    public async Task A_pak_installed_as_the_release_has_it_is_not_downloaded()
+    {
+        byte[] zip = Zip(new() { ["plugins/OpenVersus/OpenVersus_2026.10.13.01.asi"] = "asi 2026.10.13.01" });
+        byte[] pak = Encoding.ASCII.GetBytes("pak 13");
+        byte[] audio = Encoding.ASCII.GetBytes("audio 13");
+        byte[] loaderZip = Zip(new() { ["dinput8.dll"] = Encoding.Latin1.GetString(LoaderDll) });
+        var pin = Pin() with { ZipSha256 = Sha(loaderZip), ZipUrl = new Uri("https://example.test/ual/Ultimate-ASI-Loader_x64.zip"), LicenseUrl = new Uri("https://example.test/ual/license") };
+        var server = new FakeGitHub()
+            .Answer("/rel/OpenVersus_v2026.10.13.01.zip", () => Bytes(zip))
+            .Answer("/rel/OVS_P.pak", () => Bytes(pak))
+            .Answer("/rel/OVS_Audio_P.pak", () => Bytes(audio))
+            .Answer("/ual/Ultimate-ASI-Loader_x64.zip", () => Bytes(loaderZip))
+            .Answer("/ual/license", () => Bytes(License));
+        var release = new Release("2026.10.13.01", "Prod", Channel.Prod, new Version(2026, 10, 13, 1), null,
+        [
+            new ReleaseAsset("OpenVersus_v2026.10.13.01.zip", zip.Length, new Uri("https://example.test/rel/OpenVersus_v2026.10.13.01.zip"), Sha(zip)),
+            new ReleaseAsset("OVS_P.pak", pak.Length, new Uri("https://example.test/rel/OVS_P.pak"), Sha(pak)),
+            new ReleaseAsset("OVS_Audio_P.pak", audio.Length, new Uri("https://example.test/rel/OVS_Audio_P.pak"), Sha(audio)),
+        ]);
+        Game();
+        tree.Bytes(pak, [.. Rel(SavedPaks), "OVS_P.pak"]);
+        var buddy = Buddy(server, pin);
+
+        var install = await buddy.Installer.PrepareAsync(buddy.Installs.Read(Game()), release);
+
+        Assert.DoesNotContain(server.Requests, r => r.RequestUri!.AbsolutePath == "/rel/OVS_P.pak");
+        Assert.Contains(server.Requests, r => r.RequestUri!.AbsolutePath == "/rel/OVS_Audio_P.pak");
+        Assert.Contains("Paks: 1 new or changed, 1 already in place.", install.Summary);
+        install.Plan.Apply();
+        Assert.Equal(["OVS_Audio_P.pak", "OVS_P.pak"], buddy.Installs.Read(Game()).Paks.Select(p => p.Name).Order(StringComparer.Ordinal));
+        // The pak left the download cache with nothing behind it; the zip stays cached.
+        Assert.False(Directory.Exists(tree.Path("data", "downloads", Sha(audio))));
+        Assert.True(File.Exists(tree.Path("data", "downloads", Sha(zip), "OpenVersus_v2026.10.13.01.zip")));
     }
 
     private static HttpResponseMessage Bytes(byte[] bytes) => new(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };

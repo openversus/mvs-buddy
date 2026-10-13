@@ -11,4 +11,13 @@ public sealed class ChangeException : Exception
         : base(message, inner)
     {
     }
+
+    internal ChangeException(string message, IReadOnlyList<string> deniedFolders)
+        : base(message) => DeniedFolders = deniedFolders;
+
+    /// <summary>
+    /// When the change was refused because this account may not change files in some folders, those folders; otherwise
+    /// empty. Nothing was touched. On Windows, permission can be asked for and the change made again.
+    /// </summary>
+    public IReadOnlyList<string> DeniedFolders { get; } = [];
 }

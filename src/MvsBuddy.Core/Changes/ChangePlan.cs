@@ -13,8 +13,10 @@ public sealed class ChangePlan
     private readonly ILogger log;
     private readonly List<Func<string?>> refusals = [];
     private readonly List<Step> steps = [];
+    private readonly List<string> folders = [];
     private readonly List<(string Folder, string StopAt)> cleanups = [];
     private readonly List<(string Folder, string StopAt)> failureCleanups = [];
+    private readonly List<string> deleteAfter = [];
 
     internal ChangePlan(HostSystem host, ILogger log)
     {
@@ -35,14 +37,24 @@ public sealed class ChangePlan
         var both = new ChangePlan(host, log);
         both.refusals.AddRange(refusals.Concat(next.refusals));
         both.steps.AddRange(steps.Concat(next.steps));
+        both.folders.AddRange(folders.Concat(next.folders));
         both.cleanups.AddRange(cleanups.Concat(next.cleanups));
         both.failureCleanups.AddRange(failureCleanups.Concat(next.failureCleanups));
+        both.deleteAfter.AddRange(deleteAfter.Concat(next.deleteAfter));
         return both;
     }
 
     /// <summary>
-    /// Makes the changes. Refused, with nothing touched, while the game is running or when a condition of the plan fails
-    /// (a file already where another would go). If a step fails, every earlier one is undone.
+    /// The folders the plan changes that this account may not change, as the system answers now; empty when it may change
+    /// them all. A folder the plan would make is judged by the nearest one above it that exists.
+    /// </summary>
+    public IReadOnlyList<string> DeniedFolders() =>
+        folders.Distinct(host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Where(host.ChangeDeniedIn).ToList();
+
+    /// <summary>
+    /// Makes the changes. Refused, with nothing touched, while the game is running, when a condition of the plan fails (a
+    /// file already where another would go), or when this account may not change one of the folders (see
+    /// <see cref="ChangeException.DeniedFolders"/>). If a step fails, every earlier one is undone.
     /// </summary>
     /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
     public void Apply()
@@ -57,6 +69,12 @@ public sealed class ChangePlan
             {
                 throw Refuse(reason);
             }
+        }
+        if (DeniedFolders() is { Count: > 0 } denied)
+        {
+            string reason = $"This account is not allowed to change files in {string.Join(", ", denied)}, so nothing was changed.";
+            log.LogInformation("Refused: {Reason}", reason);
+            throw new ChangeException(reason, denied);
         }
         var done = new Stack<Step>();
         foreach (var step in steps)
@@ -93,6 +111,18 @@ public sealed class ChangePlan
                 throw new ChangeException(message, e);
             }
         }
+        foreach (string folder in deleteAfter)
+        {
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                // The change is made; what is left is only in the buddy's own folder, where reading the install reports it.
+                log.LogWarning(e, "Could not delete {Folder} after the change", folder);
+            }
+        }
         foreach (var (folder, stopAt) in cleanups)
         {
             RemoveEmpty(folder, stopAt);
@@ -102,11 +132,17 @@ public sealed class ChangePlan
     internal void Refuse(Func<string?> reason) => refusals.Add(reason);
 
     /// <summary>Moves a file, which must not be at <paramref name="to"/> already; undone by moving it back.</summary>
-    internal void Move(string from, string to) =>
+    internal void Move(string from, string to)
+    {
+        folders.Add(Path.GetDirectoryName(from)!);
+        folders.Add(Path.GetDirectoryName(to)!);
         steps.Add(new Step($"Move {from} to {to}", () => FileMoves.Move(from, to, host.IsWindows), () => FileMoves.Move(to, from, host.IsWindows)));
+    }
 
     /// <summary>Writes a file that is not there yet; undone by deleting it.</summary>
-    internal void Write(string path, byte[] contents) =>
+    internal void Write(string path, byte[] contents)
+    {
+        folders.Add(Path.GetDirectoryName(path)!);
         steps.Add(new Step($"Write {path}", () =>
         {
             if (File.Exists(path))
@@ -116,17 +152,22 @@ public sealed class ChangePlan
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, contents);
         }, () => File.Delete(path)));
+    }
 
     /// <summary>Deletes a small file; undone by writing it back.</summary>
     internal void Delete(string path)
     {
         byte[]? kept = null;
+        folders.Add(Path.GetDirectoryName(path)!);
         steps.Add(new Step($"Delete {path}", () =>
         {
             kept = File.ReadAllBytes(path);
             File.Delete(path);
         }, () => File.WriteAllBytes(path, kept!)));
     }
+
+    /// <summary>After success, deletes <paramref name="folder"/> and everything in it; a failure then is logged, not undone.</summary>
+    internal void DeleteAfter(string folder) => deleteAfter.Add(folder);
 
     /// <summary>After success, removes <paramref name="folder"/> and the folders above it while they are empty, up to <paramref name="stopAt"/>.</summary>
     internal void CleanUp(string folder, string stopAt) => cleanups.Add((folder, stopAt));

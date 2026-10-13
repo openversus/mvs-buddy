@@ -138,6 +138,13 @@ public sealed record InstallState
     /// <summary>Files the buddy holds aside for this copy of the game, by set.</summary>
     public required IReadOnlyList<Changes.HeldSet> Held { get; init; }
 
+    /// <summary>
+    /// The folders the buddy changes for this copy that this account may not change, as the system answers when it was
+    /// read: the game's <c>Win64</c>, and for a recognised install its <c>Content/Paks</c> and its own folder, and where the
+    /// mod's paks go. Empty when it may change them all. On Windows, permission can be asked for.
+    /// </summary>
+    public IReadOnlyList<string> DeniedFolders { get; init; } = [];
+
     /// <summary>Things worth telling the person, in plain sentences; empty when nothing stands out.</summary>
     public required IReadOnlyList<string> Notes { get; init; }
 

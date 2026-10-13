@@ -85,6 +85,7 @@ public sealed class BuddyBuilder
         var downloads = new Downloads(client, system, loggerFactory.CreateLogger<Downloads>());
         var installer = new Installer(system, releases, downloads, changes, loaderPin, loggerFactory.CreateLogger<Installer>());
         var stock = new StockCheck(system, loggerFactory.CreateLogger<StockCheck>());
-        return new Buddy(releases, games, installs, changes, downloads, installer, stock, ownsHttp ? client : null);
+        var permissions = new Permissions(system, loggerFactory.CreateLogger<Permissions>());
+        return new Buddy(releases, games, installs, changes, downloads, installer, stock, permissions, ownsHttp ? client : null);
     }
 }

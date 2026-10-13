@@ -18,11 +18,12 @@ public sealed class InstallChangesTests : IDisposable
 
     private static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
 
-    private Buddy Buddy() => new BuddyBuilder().Host(new HostSystem
+    private Buddy Buddy(Func<string, bool>? changeDenied = null) => new BuddyBuilder().Host(new HostSystem
     {
         Home = tree.Path("home"),
         DataDirectory = data,
         IsGameRunning = () => gameRunning,
+        IsChangeDenied = changeDenied ?? (_ => false),
     }).Build();
 
     private string Win64 => tree.Path("steamapps", "common", "MultiVersus", "MultiVersus", "Binaries", "Win64");
@@ -156,6 +157,76 @@ public sealed class InstallChangesTests : IDisposable
         Assert.True(File.Exists(mvsiPak));
         Assert.Equal([InstallChanges.OpenVersusSet], after.Held.Select(h => h.Name));
         Assert.Contains(after.Notes, n => n.Contains("MVS Infinite") && n.Contains("cannot run alongside"));
+    }
+
+    // The same locked folder, with the system asked first: the plan stops before its first step and names the folder,
+    // where without the question it would get three steps in and put them back.
+    [SkippableFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public void A_folder_the_account_may_not_change_stops_the_plan_before_anything_moves()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "locks a folder with Unix file modes");
+        Skip.If(Environment.UserName == "root", "root may change any folder");
+        var files = InstallOpenVersus();
+        string locked = Path.Combine(Win64, "plugins", "OpenVersus", "node", "win-x64");
+        File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var buddy = Buddy(HostSystem.ChangeDeniedOnUnix);
+            var plan = buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game()));
+            Assert.Equal([locked], plan.DeniedFolders());
+
+            var e = Assert.Throws<ChangeException>(plan.Apply);
+
+            Assert.Equal([locked], e.DeniedFolders);
+            Assert.Contains("nothing was changed", e.Message);
+            Assert.All(files, f => Assert.Equal(f.Value, File.ReadAllText(f.Key)));
+            Assert.False(Directory.Exists(Path.Combine(data, "held")));
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [SkippableFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public void Reading_an_install_says_which_of_its_folders_the_account_may_not_change()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "locks a folder with Unix file modes");
+        Skip.If(Environment.UserName == "root", "root may change any folder");
+        InstallOpenVersus();
+        var buddy = Buddy(HostSystem.ChangeDeniedOnUnix);
+        Assert.Empty(buddy.Installs.Read(Game()).DeniedFolders);
+
+        File.SetUnixFileMode(Win64, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var state = buddy.Installs.Read(Game());
+
+            Assert.Equal([Win64], state.DeniedFolders);
+            Assert.Contains(state.Notes, n => n.Contains("not allowed to change files in " + Win64, StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.SetUnixFileMode(Win64, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public void A_folder_the_plan_would_make_is_judged_by_the_nearest_one_that_exists()
+    {
+        InstallOpenVersus();
+        Assert.False(Directory.Exists(data));
+        // Only the folder the profile's held area would be made in is refused.
+        var buddy = Buddy(folder => folder == tree.Root);
+        var plan = buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game()));
+
+        var e = Assert.Throws<ChangeException>(plan.Apply);
+
+        Assert.NotEmpty(e.DeniedFolders);
+        Assert.All(e.DeniedFolders, f => Assert.StartsWith(data + Path.DirectorySeparatorChar, f, StringComparison.Ordinal));
+        Assert.False(Directory.Exists(data));
     }
 
     // Locks a folder with Unix file modes, which Windows does not have.

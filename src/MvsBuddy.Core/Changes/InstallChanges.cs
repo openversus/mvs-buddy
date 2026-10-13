@@ -78,8 +78,10 @@ public sealed class InstallChanges
     }
 
     /// <summary>
-    /// Puts a held set back. Refused, with nothing touched, when a file is already where one of the set's would go (the
-    /// mod was installed again since it was held, say).
+    /// Puts a held set back. For the set an install keeps of what it replaced, this undoes that install: first the files it
+    /// put in place are taken away, and any OpenVersus plugin the set does not put back (the mod updates itself under a new
+    /// file name), then the held files go back; what is taken away is deleted once everything is back. Refused, with
+    /// nothing touched, when a file the buddy did not put there is where one of the set's would go.
     /// </summary>
     public ChangePlan Restore(InstallState state, string set)
     {
@@ -92,7 +94,18 @@ public sealed class InstallChanges
             return plan;
         }
         var entries = record.Entries.Where(e => e.IsHeld).ToList();
-        plan.Refuse(() => entries.FirstOrDefault(e => File.Exists(e.RestoreTo)) is HeldEntry blocked
+        var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var restoreTo = new HashSet<string>(entries.Select(e => e.RestoreTo), comparer);
+        var takeAway = record.Placed.Count == 0 ? []
+            : record.Placed.Concat(state.Mod.Plugins.Where(p => !restoreTo.Contains(p))).Where(File.Exists).Distinct(comparer).ToList();
+        var takenAway = new HashSet<string>(takeAway, comparer);
+        string undone = Path.Combine(record.Folder, "undone");
+        for (int i = 0; i < takeAway.Count; i++)
+        {
+            plan.Move(takeAway[i], Path.Combine(undone, $"{i:000}-{Path.GetFileName(takeAway[i])}"));
+        }
+        plan.CleanUpOnFailure(undone, host.DataDirectory);
+        plan.Refuse(() => entries.FirstOrDefault(e => File.Exists(e.RestoreTo) && !takenAway.Contains(e.RestoreTo)) is HeldEntry blocked
             ? $"{blocked.RestoreTo} is already there, so {set} cannot be put back over it. Move it away, or discard what is held."
             : null);
         foreach (var entry in entries)
@@ -100,6 +113,14 @@ public sealed class InstallChanges
             plan.Move(entry.HeldPath, entry.RestoreTo);
         }
         plan.Delete(Path.Combine(record.Folder, HeldArea.ManifestFile));
+        if (takeAway.Count > 0)
+        {
+            plan.DeleteAfter(undone);
+            foreach (string from in takeAway.Select(f => Path.GetDirectoryName(f)!).Distinct(comparer))
+            {
+                plan.CleanUp(from, StopAt(state, from));
+            }
+        }
         plan.CleanUp(Path.Combine(record.Folder, "files"), host.DataDirectory);
         return plan;
     }
@@ -138,8 +159,11 @@ public sealed class InstallChanges
         return plan;
     }
 
-    /// <summary>Adds holding <paramref name="files"/> as <paramref name="set"/> to <paramref name="plan"/>: the moves, then the manifest.</summary>
-    internal void AddHold(ChangePlan plan, InstallState state, string set, IReadOnlyList<(string Original, string RestoreTo)> files)
+    /// <summary>
+    /// Adds holding <paramref name="files"/> as <paramref name="set"/> to <paramref name="plan"/>: the moves, then the
+    /// manifest, which lists <paramref name="placed"/> when an install makes the set (see <see cref="HeldSet.Placed"/>).
+    /// </summary>
+    internal void AddHold(ChangePlan plan, InstallState state, string set, IReadOnlyList<(string Original, string RestoreTo)> files, IReadOnlyList<string>? placed = null)
     {
         string? folder = held.SetFolder(state.Game, set);
         if (folder == null)
@@ -159,7 +183,7 @@ public sealed class InstallChanges
         }
         plan.CleanUpOnFailure(Path.Combine(folder, "files"), host.DataDirectory);
         // Written last: a set folder without its manifest is a hold that never finished, and its originals are untouched.
-        plan.Write(Path.Combine(folder, HeldArea.ManifestFile), HeldArea.Manifest(state.Game, set, DateTimeOffset.Now, entries));
+        plan.Write(Path.Combine(folder, HeldArea.ManifestFile), HeldArea.Manifest(state.Game, set, DateTimeOffset.Now, entries, placed));
         foreach (string from in files.Select(f => Path.GetDirectoryName(f.Original)!).Distinct())
         {
             plan.CleanUp(from, StopAt(state, from));

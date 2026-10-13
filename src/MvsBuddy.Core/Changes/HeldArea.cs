@@ -25,7 +25,15 @@ public sealed record HeldEntry(string Original, string RestoreTo, string HeldPat
 /// False for files that were being held when something stopped the buddy before it wrote down what it held: the files at
 /// their original places are the real ones, and these can be discarded.
 /// </param>
-public sealed record HeldSet(string Name, string Folder, DateTimeOffset? HeldAt, IReadOnlyList<HeldEntry> Entries, bool IsRecorded);
+public sealed record HeldSet(string Name, string Folder, DateTimeOffset? HeldAt, IReadOnlyList<HeldEntry> Entries, bool IsRecorded)
+{
+    /// <summary>
+    /// For the set an install keeps of what it replaced: the files that install put in place. Restoring the set takes them
+    /// away (with any OpenVersus plugin the set does not put back) before it puts the held files back, so the copy is as it
+    /// was before the install. Empty for other sets.
+    /// </summary>
+    public IReadOnlyList<string> Placed { get; init; } = [];
+}
 
 /// <summary>
 /// Where held files are kept: <c>&lt;the buddy's folder&gt;/held/&lt;copy&gt;/&lt;set&gt;/</c>, never anywhere the game or
@@ -62,7 +70,10 @@ internal sealed class HeldArea(HostSystem host)
             sets.Add(record == null
                 ? new HeldSet(Path.GetFileName(folder), folder, null, [], false)
                 : new HeldSet(record.Set, folder, record.HeldAt,
-                    record.Entries.Select(e => new HeldEntry(e.Original, e.RestoreTo, Path.Combine(folder, e.Held))).ToList(), true));
+                    record.Entries.Select(e => new HeldEntry(e.Original, e.RestoreTo, Path.Combine(folder, e.Held))).ToList(), true)
+                {
+                    Placed = record.Placed,
+                });
         }
         return sets;
     }
@@ -96,13 +107,15 @@ internal sealed class HeldArea(HostSystem host)
         return Path.Combine(copy, new string(set.Select(c => invalid.Contains(c) ? '_' : c).ToArray()));
     }
 
-    internal static byte[] Manifest(GameInstall game, string set, DateTimeOffset heldAt, IEnumerable<(string Original, string RestoreTo, string Held)> entries) =>
+    internal static byte[] Manifest(GameInstall game, string set, DateTimeOffset heldAt, IEnumerable<(string Original, string RestoreTo, string Held)> entries,
+        IEnumerable<string>? placed = null) =>
         JsonSerializer.SerializeToUtf8Bytes(new HeldManifest
         {
             Game = game.Win64Directory,
             Set = set,
             HeldAt = heldAt,
             Entries = entries.Select(e => new HeldManifestEntry { Original = e.Original, RestoreTo = e.RestoreTo, Held = e.Held }).ToList(),
+            Placed = placed?.ToList() ?? [],
         }, HeldJsonContext.Default.HeldManifest);
 }
 
@@ -115,6 +128,9 @@ internal sealed class HeldManifest
     public DateTimeOffset HeldAt { get; set; }
 
     public List<HeldManifestEntry> Entries { get; set; } = [];
+
+    /// <summary>What the install this set was made by put in place; empty for other sets and in older manifests.</summary>
+    public List<string> Placed { get; set; } = [];
 }
 
 internal sealed class HeldManifestEntry

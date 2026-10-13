@@ -11,8 +11,9 @@ public sealed class Buddy : IDisposable
 {
     private readonly HttpClient? ownedHttp;
 
-    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, InstallChanges changes, Downloads downloads, Installer installer, StockCheck stock, HttpClient? ownedHttp)
+    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, InstallChanges changes, Downloads downloads, Installer installer, StockCheck stock, Permissions permissions, HttpClient? ownedHttp)
     {
+        Permissions = permissions;
         Stock = stock;
         Installer = installer;
         Downloads = downloads;
@@ -43,6 +44,9 @@ public sealed class Buddy : IDisposable
 
     /// <summary>Plans that change an install: holding mods aside and restoring them.</summary>
     public InstallChanges Changes { get; }
+
+    /// <summary>Asking Windows to let this account change files in folders it is refused in.</summary>
+    public Permissions Permissions { get; }
 
     /// <summary>Disposes the HTTP client if the buddy made it.</summary>
     public void Dispose() => ownedHttp?.Dispose();
