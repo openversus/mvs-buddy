@@ -33,17 +33,31 @@ public sealed class ReleaseCatalogTests
     }
 
     [Fact]
-    public async Task Prod_is_the_numbered_tags_only()
+    public async Task Prod_is_the_numbered_tags_and_their_prereleases()
     {
         var github = new FakeGitHub().Json(ClientPage1, Fixture("ovs-client-releases.json"));
 
         var prod = await Catalog(github).ListAsync(Channel.Prod);
 
-        // Not 2026.10.11.04-prerelease (a suffix), not OVS_Season_1 (no version), not the 2026-02-03 draft.
-        var release = Assert.Single(prod);
-        Assert.Equal("2026.04.08.14", release.Tag);
-        Assert.Equal(new Version(2026, 4, 8, 14), release.Version);
-        Assert.Equal("OpenVersus_v2026.04.08.14.zip", release.InstallZip?.Name);
+        // Not OVS_Season_1 (no version), not the 2026-02-03 draft.
+        Assert.Equal(["2026.10.11.04-prerelease", "2026.04.08.14"], prod.Select(r => r.Tag));
+        Assert.True(prod[0].IsPrerelease);
+        Assert.Equal(new Version(2026, 10, 11, 4), prod[0].Version);
+        Assert.Equal("OpenVersus_v2026.10.11.04-prerelease.zip", prod[0].InstallZip?.Name);
+        Assert.False(prod[1].IsPrerelease);
+        Assert.Equal(new Version(2026, 4, 8, 14), prod[1].Version);
+        Assert.Equal("OpenVersus_v2026.04.08.14.zip", prod[1].InstallZip?.Name);
+    }
+
+    [Fact]
+    public async Task A_full_release_comes_before_the_prerelease_of_its_version()
+    {
+        // The real prerelease, and the real April release renamed to the prerelease's version, published earlier.
+        var github = new FakeGitHub().Json(ClientPage1, Retag(Fixture("ovs-client-releases.json"), "2026.04.08.14", "2026.10.11.04"));
+
+        var prod = await Catalog(github).ListAsync(Channel.Prod);
+
+        Assert.Equal(["2026.10.11.04", "2026.10.11.04-prerelease"], prod.Select(r => r.Tag));
     }
 
     [Fact]
@@ -69,7 +83,7 @@ public sealed class ReleaseCatalogTests
 
         var prod = await Catalog(github).ListAsync(Channel.Prod);
 
-        Assert.Equal(["2026.04.08.14"], prod.Select(r => r.Tag));
+        Assert.Equal(["2026.10.11.04-prerelease", "2026.04.08.14"], prod.Select(r => r.Tag));
     }
 
     [Fact]
@@ -101,7 +115,7 @@ public sealed class ReleaseCatalogTests
             .Single(r => (string)r!["tag_name"]! == "2026.04.08.14")!["assets"]!.AsArray()
             .Single(a => ((string)a!["name"]!).EndsWith(".zip", StringComparison.Ordinal))!["digest"]!;
 
-        var zip = (await Catalog(github).ListAsync(Channel.Prod))[0].InstallZip!;
+        var zip = (await Catalog(github).ListAsync(Channel.Prod)).Single(r => r.Tag == "2026.04.08.14").InstallZip!;
 
         Assert.Equal(digest, "sha256:" + zip.Sha256);
         Assert.Matches("^[0-9a-f]{64}$", zip.Sha256);
@@ -129,7 +143,7 @@ public sealed class ReleaseCatalogTests
         var github = new FakeGitHub().Json(ClientPage1, Fixture("ovs-client-releases.json"));
         var catalog = Catalog(github);
 
-        var paks = await catalog.PaksForAsync((await catalog.ListAsync(Channel.Prod))[0]);
+        var paks = await catalog.PaksForAsync((await catalog.ListAsync(Channel.Prod)).Single(r => r.Tag == "2026.04.08.14"));
 
         Assert.Empty(paks);
         Assert.DoesNotContain(github.Requests, r => r.RequestUri!.AbsolutePath.Contains("ovs-paks"));
@@ -204,8 +218,8 @@ public sealed class ReleaseCatalogTests
 
         var releases = await Catalog(github).ListAsync(Channel.Prod);
 
-        Assert.Equal(101, releases.Count);
-        Assert.Equal("2026.04.08.14", releases[0].Tag);
+        Assert.Equal(102, releases.Count);
+        Assert.Equal("2026.10.11.04-prerelease", releases[0].Tag);
         Assert.Equal(2, github.Requests.Count);
     }
 
@@ -224,7 +238,10 @@ public sealed class ReleaseCatalogTests
     [InlineData("2026.04.08.14", Channel.Prod)]
     [InlineData("2026.10.12.01-testing", Channel.Testing)]
     [InlineData("OVS_Season_1-testing", Channel.Testing)]
-    [InlineData("2026.10.11.04-prerelease", null)]
+    [InlineData("2026.10.11.04-prerelease", Channel.Prod)]
+    [InlineData("OVS_Season_1-prerelease", null)]
+    [InlineData("2026.10.11.04-prerelease-testing", Channel.Testing)]
+    [InlineData("2026.10.11.04-test1", null)]
     [InlineData("OVS_Season_1", null)]
     [InlineData("v2026.04.08.14", null)]
     [InlineData("2026.4.8.14", null)]

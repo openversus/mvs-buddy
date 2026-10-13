@@ -2,6 +2,7 @@ using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MvsBuddy.Catalog;
+using MvsBuddy.Games;
 
 namespace MvsBuddy;
 
@@ -16,6 +17,7 @@ public sealed class BuddyBuilder
     private GitHubRepository clientReleases = new("openversus", "ovs-client");
     private GitHubRepository paks = new("openversus", "ovs-paks");
     private string testingPaksTag = "paks-current";
+    private HostSystem? host;
 
     /// <summary>Where the buddy logs. Default: nowhere.</summary>
     public BuddyBuilder Logging(ILoggerFactory factory)
@@ -53,12 +55,20 @@ public sealed class BuddyBuilder
         return this;
     }
 
+    /// <summary>Stands in for this machine (tests).</summary>
+    internal BuddyBuilder Host(HostSystem system)
+    {
+        host = system;
+        return this;
+    }
+
     /// <summary>Creates the buddy.</summary>
     public Buddy Build()
     {
         bool ownsHttp = http == null;
         var client = http ?? new HttpClient();
         var releases = new ReleaseCatalog(client, clientReleases, paks, testingPaksTag, loggerFactory.CreateLogger<ReleaseCatalog>());
-        return new Buddy(releases, ownsHttp ? client : null);
+        var games = new GameFinder(host ?? HostSystem.Current(), loggerFactory.CreateLogger<GameFinder>());
+        return new Buddy(releases, games, ownsHttp ? client : null);
     }
 }

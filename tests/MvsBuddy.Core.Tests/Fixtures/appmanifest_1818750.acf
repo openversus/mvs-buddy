@@ -1,0 +1,46 @@
+"AppState"
+{
+	"appid"		"1818750"
+	"Universe"		"1"
+	"name"		"MultiVersus"
+	"StateFlags"		"4"
+	"installdir"		"MultiVersus"
+	"LastUpdated"		"0"
+	"LastPlayed"		"0"
+	"SizeOnDisk"		"0"
+	"StagingSize"		"0"
+	"buildid"		"17784632"
+	"LastOwner"		"0"
+	"DownloadType"		"3"
+	"UpdateResult"		"0"
+	"BytesToDownload"		"91554960"
+	"BytesDownloaded"		"91554960"
+	"BytesToStage"		"95968024"
+	"BytesStaged"		"95968024"
+	"TargetBuildID"		"0"
+	"AutoUpdateBehavior"		"0"
+	"AllowOtherDownloadsWhileRunning"		"0"
+	"ScheduledAutoUpdate"		"0"
+	"FullValidateAfterNextUpdate"		"1"
+	"InstalledDepots"
+	{
+		"1818751"
+		{
+			"manifest"		"0"
+			"size"		"0"
+		}
+	}
+	"SharedDepots"
+	{
+		"228988"		"228980"
+		"228990"		"228980"
+	}
+	"UserConfig"
+	{
+		"language"		"english"
+	}
+	"MountedConfig"
+	{
+		"language"		"english"
+	}
+}

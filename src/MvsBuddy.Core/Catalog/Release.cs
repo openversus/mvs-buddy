@@ -9,6 +9,9 @@ namespace MvsBuddy.Catalog;
 /// <param name="Assets">Its files.</param>
 public sealed record Release(string Tag, string Name, Channel Channel, Version? Version, DateTimeOffset? PublishedAt, IReadOnlyList<ReleaseAsset> Assets)
 {
+    /// <summary>A prod prerelease: its tag is a version followed by <c>-prerelease</c>.</summary>
+    public bool IsPrerelease => Channel == Channel.Prod && ChannelRules.IsPrerelease(Tag);
+
     /// <summary>The install zip (<c>OpenVersus_*.zip</c>), or null when the release has none.</summary>
     public ReleaseAsset? InstallZip => Assets.FirstOrDefault(a =>
         a.Name.StartsWith("OpenVersus_", StringComparison.Ordinal) && a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));

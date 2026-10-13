@@ -35,8 +35,9 @@ public sealed class ReleaseCatalog
     }
 
     /// <summary>
-    /// The releases on <paramref name="channel"/>, newest version first (a testing release without a version in its tag
-    /// comes after those with one, newest first). Drafts and tags that belong to neither channel are left out.
+    /// The releases on <paramref name="channel"/>, newest version first, a full release before a prerelease of the same
+    /// version (a testing release without a version in its tag comes after those with one, newest first). Drafts and tags
+    /// that belong to neither channel are left out.
     /// </summary>
     /// <exception cref="ReleaseCatalogException">GitHub could not be reached, refused, or answered something unreadable.</exception>
     public async Task<IReadOnlyList<Release>> ListAsync(Channel channel, CancellationToken cancellationToken = default)
@@ -62,7 +63,7 @@ public sealed class ReleaseCatalog
             }
         }
         log.LogInformation("{Count} {Channel} releases among {Seen} in {Repository}", releases.Count, channel, seen, clientReleases);
-        return releases.OrderByDescending(r => r.Version).ThenByDescending(r => r.PublishedAt).ToList();
+        return releases.OrderByDescending(r => r.Version).ThenBy(r => r.IsPrerelease).ThenByDescending(r => r.PublishedAt).ToList();
     }
 
     /// <summary>

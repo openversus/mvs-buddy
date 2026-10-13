@@ -1,0 +1,40 @@
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"{LIB0}"
+		"label"		""
+		"contentid"		"0"
+		"totalsize"		"0"
+		"update_clean_bytes_tally"		"0"
+		"time_last_update_verified"		"0"
+		"apps"
+		{
+			"1818750"		"0"
+		}
+	}
+	"1"
+	{
+		"path"		"{LIB1}"
+		"label"		""
+		"contentid"		"0"
+		"totalsize"		"0"
+		"update_clean_bytes_tally"		"0"
+		"time_last_update_verified"		"0"
+		"apps"
+		{
+		}
+	}
+	"2"
+	{
+		"path"		"{LIB2}"
+		"label"		""
+		"contentid"		"0"
+		"totalsize"		"0"
+		"update_clean_bytes_tally"		"0"
+		"time_last_update_verified"		"0"
+		"apps"
+		{
+		}
+	}
+}
