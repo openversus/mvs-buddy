@@ -1,0 +1,25 @@
+<Project>
+  <!-- The one version number for the repository lives in VERSION at its root, as in ovs-client and RmlUiFlat. It
+       becomes the assemblies' version, which the buddy reports as its own (the User-Agent it sends to GitHub). -->
+  <PropertyGroup>
+    <BuddyVersionFile>$(MSBuildThisFileDirectory)VERSION</BuddyVersionFile>
+    <BuddyVersion Condition="Exists('$(BuddyVersionFile)')">$([System.IO.File]::ReadAllText('$(BuddyVersionFile)').Trim())</BuddyVersion>
+    <Version Condition="'$(BuddyVersion)' != ''">$(BuddyVersion)</Version>
+    <InformationalVersion Condition="'$(BuddyVersion)' != ''">$(BuddyVersion)</InformationalVersion>
+  </PropertyGroup>
+
+  <Target Name="RequireVersionFile" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(BuddyVersion)' == ''" Text="VERSION file not found at $(BuddyVersionFile)." />
+  </Target>
+
+  <PropertyGroup>
+    <!-- Each project names its own target framework: the core is netstandard2.0, the rest net10.0. -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The .editorconfig rules run as analyzers during the build, as in ovs-client: braces on every control-flow body
+         (IDE0011) and a doc comment on every public member (CS1591) are errors. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

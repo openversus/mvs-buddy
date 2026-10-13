@@ -1,0 +1,71 @@
+[
+  {
+    "tag_name": "end-game-paks-2026.10.08",
+    "name": "End Game paks (2026-10-08)",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-11T20:58:52Z",
+    "assets": [
+      {
+        "name": "OVS_Audio_P.pak",
+        "size": 394473,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Audio_P.pak",
+        "digest": "sha256:bb095c07531a9e61d2766b45ff3dd421e829688390c1338f88c1174139b6814a"
+      },
+      {
+        "name": "OVS_Experimental_50_P.pak",
+        "size": 3779,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Experimental_50_P.pak",
+        "digest": "sha256:f31f038ae3b5ba07a3f7e419dc2b6d9ef9f1dcb7d80666ce7b64f638d912b47e"
+      },
+      {
+        "name": "OVS_Experimental_50_P.ucas",
+        "size": 154255,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Experimental_50_P.ucas",
+        "digest": "sha256:5a0b183daa3a24ac36cedddd766eb8b50c3c75d4ccc03c1f1f066933ed897dab"
+      },
+      {
+        "name": "OVS_Experimental_50_P.utoc",
+        "size": 1675,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Experimental_50_P.utoc",
+        "digest": "sha256:efd4bc4651d5bf53fd8874390d827faede260588b52e04bd250ed4e9f6f4d487"
+      },
+      {
+        "name": "OVS_Overrides_40_P.pak",
+        "size": 347,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Overrides_40_P.pak",
+        "digest": "sha256:75e7144577253917f6da7312ef5e585b12fb728226a22b0938323751a6b555cd"
+      },
+      {
+        "name": "OVS_Overrides_40_P.ucas",
+        "size": 151432,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Overrides_40_P.ucas",
+        "digest": "sha256:948e4c89b314dd2b9071ec8bfeae81f049e9acec3fe49080b1c3f6abb5646831"
+      },
+      {
+        "name": "OVS_Overrides_40_P.utoc",
+        "size": 2457,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_Overrides_40_P.utoc",
+        "digest": "sha256:257490ab6cac83143e83e0ebda9e67bd0007b2dc25ebfefa8d392cc28138b08e"
+      },
+      {
+        "name": "OVS_P.pak",
+        "size": 45966,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_P.pak",
+        "digest": "sha256:4e617343e99024ebac24c3bb6f13725b4dc28513290cfb3894176e617d537983"
+      },
+      {
+        "name": "OVS_P.ucas",
+        "size": 344597072,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_P.ucas",
+        "digest": "sha256:9794d1f741205b8cb88fa07bb1edf9b5b57d02f76f654b7859bfe567094d9047"
+      },
+      {
+        "name": "OVS_P.utoc",
+        "size": 377818,
+        "browser_download_url": "https://github.com/openversus/ovs-paks/releases/download/end-game-paks-2026.10.08/OVS_P.utoc",
+        "digest": "sha256:fa9bba8e40b3a42f798512e672dc9fc9a8ded0f6aeec4a31598f4956f5255bab"
+      }
+    ]
+  }
+]

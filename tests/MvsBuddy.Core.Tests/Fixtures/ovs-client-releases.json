@@ -1,0 +1,92 @@
+[
+  {
+    "tag_name": "2026-02-03",
+    "name": "Initial release, client-only",
+    "draft": true,
+    "prerelease": true,
+    "published_at": "2026-03-28T03:57:00Z",
+    "assets": [
+      {
+        "name": "OpenVersus_2026-02-03.zip",
+        "size": 1266581,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/untagged-743faecf027db902e872/OpenVersus_2026-02-03.zip",
+        "digest": "sha256:851879d39bfba6d2a768cedca929396c4e81623b45c46e20da34b37c07bceb3f"
+      }
+    ]
+  },
+  {
+    "tag_name": "2026.10.11.04-prerelease",
+    "name": "OpenVersus 2026.10.11.04-prerelease",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-11T16:39:52Z",
+    "assets": [
+      {
+        "name": "OpenVersus_2026.10.11.04.asi",
+        "size": 5547008,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.10.11.04-prerelease/OpenVersus_2026.10.11.04.asi",
+        "digest": "sha256:35db8d7bb5e9d8a15acf556c838be4f3f82b51d1bc1446158d8077359ad6d124"
+      },
+      {
+        "name": "OpenVersus_2026.10.11.04.asi.sha256",
+        "size": 95,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.10.11.04-prerelease/OpenVersus_2026.10.11.04.asi.sha256",
+        "digest": "sha256:1425fe0a274844e680b975c22234e67a328ebdd3ed07fa394b78f09939dc4e76"
+      },
+      {
+        "name": "OpenVersus_v2026.10.11.04-prerelease.zip",
+        "size": 5199071,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.10.11.04-prerelease/OpenVersus_v2026.10.11.04-prerelease.zip",
+        "digest": "sha256:ccf3d54c8cd4bf18abbba2ba9f67a7c522170f3f411b2e710872c488a00246f2"
+      },
+      {
+        "name": "OpenVersus_v2026.10.11.04-prerelease.zip.sha256",
+        "size": 107,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.10.11.04-prerelease/OpenVersus_v2026.10.11.04-prerelease.zip.sha256",
+        "digest": "sha256:27dc059f38f1f197a7078db8e6d277662b7f70a1959527a2a6f46836465e7fa1"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 202,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.10.11.04-prerelease/SHA256SUMS",
+        "digest": "sha256:50c3a208e051d459f91d363a54643e3a649879a6959a21e624f77b5c167f19a9"
+      }
+    ]
+  },
+  {
+    "tag_name": "OVS_Season_1",
+    "name": "OVS Season 1 Testing Client",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-12T05:15:33Z",
+    "assets": [
+      {
+        "name": "OpenVersus_2026.10.12.01.zip",
+        "size": 79906913,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/OVS_Season_1/OpenVersus_2026.10.12.01.zip",
+        "digest": "sha256:9521d0380f2eab2d0bbc987a67ad794320228dba0634b1333535e9bbc178595c"
+      }
+    ]
+  },
+  {
+    "tag_name": "2026.04.08.14",
+    "name": "2026.04.08.14 prerelease",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-04-08T08:59:05Z",
+    "assets": [
+      {
+        "name": "OpenVersus.asi",
+        "size": 216576,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.04.08.14/OpenVersus.asi",
+        "digest": "sha256:3c08abc65500cf3bdc90342a08881e853ed487b0d5d5bc2fd6effd633585461f"
+      },
+      {
+        "name": "OpenVersus_v2026.04.08.14.zip",
+        "size": 469126,
+        "browser_download_url": "https://github.com/openversus/ovs-client/releases/download/2026.04.08.14/OpenVersus_v2026.04.08.14.zip",
+        "digest": "sha256:edbba8444891c315e6bbf03c560aa66d80417915f48eeb769e362459442ab32d"
+      }
+    ]
+  }
+]

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/MvsBuddy.Core/MvsBuddy.Core.csproj" />
+  <Project Path="tests/MvsBuddy.Core.Tests/MvsBuddy.Core.Tests.csproj" />
+</Solution>

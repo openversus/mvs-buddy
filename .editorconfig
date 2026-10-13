@@ -28,3 +28,7 @@ csharp_new_line_before_open_brace = all
 csharp_new_line_before_else = true
 csharp_new_line_before_catch = true
 csharp_new_line_before_finally = true
+
+# Every public type and member has an XML doc comment (Directory.Build.props turns on the documentation file; test
+# projects turn it off), as in RmlUiFlat.
+dotnet_diagnostic.CS1591.severity = error
