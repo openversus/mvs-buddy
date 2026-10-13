@@ -22,6 +22,15 @@ internal sealed class TempTree : IDisposable
         return path;
     }
 
+    /// <summary>Writes a binary file (making its folders) and returns its path.</summary>
+    public string Bytes(byte[] data, params string[] parts)
+    {
+        string path = Path(parts);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+        System.IO.File.WriteAllBytes(path, data);
+        return path;
+    }
+
     /// <summary>
     /// A game install as the stores lay it out: the executable in <c>MultiVersus/Binaries/Win64</c> under the given
     /// folder and a pak in <c>MultiVersus/Content/Paks</c>. Returns the Win64 folder.

@@ -1,0 +1,158 @@
+using MvsBuddy.Games;
+
+namespace MvsBuddy.Installs;
+
+/// <summary>Which of the mod's layouts is installed.</summary>
+public enum ModLayout
+{
+    /// <summary>No OpenVersus plugin.</summary>
+    None,
+
+    /// <summary>
+    /// An old plugin dropped beside the game's executable (where the loader also loads plugins from), with its
+    /// <c>.ini</c> files beside it: never the way the mod was meant to be installed, but done.
+    /// </summary>
+    BesideGame,
+
+    /// <summary>Releases up to 2026.04: <c>plugins/OpenVersus.asi</c> with its <c>.ini</c> files loose beside it.</summary>
+    Old,
+
+    /// <summary>Since then: everything in <c>plugins/OpenVersus/</c>, the plugin named <c>OpenVersus_&lt;version&gt;.asi</c>.</summary>
+    Current,
+}
+
+/// <summary>What an install amounts to, at a glance.</summary>
+public enum InstallStatus
+{
+    /// <summary>Neither the mod nor Ultimate ASI Loader.</summary>
+    NotInstalled,
+
+    /// <summary>The mod and Ultimate ASI Loader.</summary>
+    Installed,
+
+    /// <summary>The mod without Ultimate ASI Loader beside the game: nothing loads it.</summary>
+    LoaderMissing,
+
+    /// <summary>Ultimate ASI Loader without the mod.</summary>
+    LoaderOnly,
+
+    /// <summary>The mod is held aside by the buddy (disabled), and none of it is installed.</summary>
+    Disabled,
+}
+
+/// <summary>A DLL beside the game under a name Ultimate ASI Loader can take.</summary>
+/// <param name="Path">The file.</param>
+/// <param name="Sha256">Its SHA-256, lowercase hex.</param>
+/// <param name="IsUltimateAsiLoader">Whether it is Ultimate ASI Loader (it carries the loader's name); another program's DLL otherwise.</param>
+/// <param name="IsPinnedBuild">Whether it is the exact build the buddy installs (<see cref="AsiLoaderPin"/>).</param>
+public sealed record LoaderFile(string Path, string Sha256, bool IsUltimateAsiLoader, bool IsPinnedBuild)
+{
+    /// <summary>The file's name, such as <c>xinput1_3.dll</c>.</summary>
+    public string FileName => System.IO.Path.GetFileName(Path);
+}
+
+/// <summary>An ASI plugin that is not OpenVersus, somewhere the loader loads plugins from.</summary>
+/// <param name="Path">The file.</param>
+/// <param name="IsMvsInfinite">Whether its name is MVS Infinite's (<c>MVSIASI.asi</c>, <c>mvsi.asi</c>, <c>mvs_infinite.asi</c> and the like), which cannot run alongside OpenVersus.</param>
+public sealed record OtherPlugin(string Path, bool IsMvsInfinite)
+{
+    /// <summary>The file's name.</summary>
+    public string FileName => System.IO.Path.GetFileName(Path);
+}
+
+/// <summary>A pak file in the game's <c>Content/Paks</c> that is neither the game's own nor OpenVersus's.</summary>
+/// <param name="Path">The file.</param>
+/// <param name="Size">Its size in bytes.</param>
+/// <param name="IsMvsInfinite">Whether its name says MVS Infinite (it has <c>MVSI</c> or <c>Infinite</c> in it); a guess, which the person can overrule.</param>
+public sealed record OtherPak(string Path, long Size, bool IsMvsInfinite)
+{
+    /// <summary>The file's name.</summary>
+    public string Name => System.IO.Path.GetFileName(Path);
+}
+
+/// <summary>A pak file (a <c>.pak</c>, <c>.utoc</c>, <c>.ucas</c> or <c>.sig</c>).</summary>
+/// <param name="Path">The file.</param>
+/// <param name="Size">Its size in bytes.</param>
+public sealed record PakFile(string Path, long Size)
+{
+    /// <summary>The file's name.</summary>
+    public string Name => System.IO.Path.GetFileName(Path);
+}
+
+/// <summary>The mod's settings file and the values that decide where it connects.</summary>
+/// <param name="Path">The file: <c>OpenVersus.toml</c>, or the old layout's <c>OpenVersus.ini</c>.</param>
+/// <param name="GameServerUrl"><c>[Server.Game] ServerUrl</c>: the server the game talks to. Null when unread or absent.</param>
+/// <param name="ProdServerUrl"><c>[Server.Prod] ServerUrl</c>. Null when unread or absent.</param>
+/// <param name="LogLevel"><c>[Settings] LogLevel</c>. Null when unread or absent.</param>
+/// <param name="Errors">Why the file cannot be used, if it cannot; the mod then runs on its defaults.</param>
+public sealed record ModSettings(string Path, string? GameServerUrl, string? ProdServerUrl, string? LogLevel, IReadOnlyList<string> Errors);
+
+/// <summary>The mod's own files, as found.</summary>
+/// <param name="Layout">Which layout is installed: the newest found, when there are several.</param>
+/// <param name="Plugins">The plugin files (<c>.asi</c>) of that layout.</param>
+/// <param name="Version">The newest version named by a current-layout plugin; null for the older layouts or none.</param>
+/// <param name="Settings">The settings file, or null when there is none (the mod writes one with its defaults).</param>
+/// <param name="OldLayoutFiles">Files of an older layout still there beside a newer one; an old plugin among them loads too.</param>
+/// <param name="Backups">Plugins renamed aside (<c>.bak</c>), which do not load.</param>
+/// <param name="Files">Every file of the installed layout: all of <c>plugins/OpenVersus/</c>, or an old plugin with the files beside it.</param>
+public sealed record ModFiles(ModLayout Layout, IReadOnlyList<string> Plugins, Version? Version, ModSettings? Settings,
+    IReadOnlyList<string> OldLayoutFiles, IReadOnlyList<string> Backups, IReadOnlyList<string> Files);
+
+/// <summary>What is installed for one copy of the game, read from disk.</summary>
+public sealed record InstallState
+{
+    /// <summary>The game copy this describes.</summary>
+    public required GameInstall Game { get; init; }
+
+    /// <summary>The DLLs beside the game under Ultimate ASI Loader's names, whether or not they are it.</summary>
+    public required IReadOnlyList<LoaderFile> Loaders { get; init; }
+
+    /// <summary>The mod's own files.</summary>
+    public required ModFiles Mod { get; init; }
+
+    /// <summary>
+    /// Where the game mounts the mod's paks from (<c>%LOCALAPPDATA%\MultiVersus\Saved\Paks</c>, inside the Wine prefix on
+    /// Linux), whether or not it exists yet. Null when the buddy cannot tell: on Linux without a known prefix.
+    /// </summary>
+    public string? SavedPaksDirectory { get; init; }
+
+    /// <summary>The mod's paks (<c>OVS_*</c>) in <see cref="SavedPaksDirectory"/>.</summary>
+    public required IReadOnlyList<PakFile> Paks { get; init; }
+
+    /// <summary>
+    /// The mod's paks (<c>OVS_*</c>) anywhere in the game's own <c>Content</c> or <c>Binaries</c> (<c>Content/Paks</c>, a
+    /// <c>~mods</c> folder), put there by hand. They belong in <see cref="SavedPaksDirectory"/>. Only looked for in a
+    /// verified install.
+    /// </summary>
+    public required IReadOnlyList<PakFile> PaksInGame { get; init; }
+
+    /// <summary>
+    /// Paks in the game's <c>Content/Paks</c> (at any depth) that are neither the game's own nor OpenVersus's: another
+    /// mod's, such as MVS Infinite's. Only looked for in a verified install.
+    /// </summary>
+    public required IReadOnlyList<OtherPak> OtherPaks { get; init; }
+
+    /// <summary>ASI plugins that are not OpenVersus, where the loader loads them from.</summary>
+    public required IReadOnlyList<OtherPlugin> OtherPlugins { get; init; }
+
+    /// <summary>Files the buddy holds aside for this copy of the game, by set.</summary>
+    public required IReadOnlyList<Changes.HeldSet> Held { get; init; }
+
+    /// <summary>Things worth telling the person, in plain sentences; empty when nothing stands out.</summary>
+    public required IReadOnlyList<string> Notes { get; init; }
+
+    /// <summary>The install at a glance.</summary>
+    public InstallStatus Status
+    {
+        get
+        {
+            bool loader = Loaders.Any(l => l.IsUltimateAsiLoader);
+            if (Mod.Layout == ModLayout.None)
+            {
+                return Held.Any(h => h.IsRecorded && h.Name == Changes.InstallChanges.OpenVersusSet) ? InstallStatus.Disabled
+                    : loader ? InstallStatus.LoaderOnly : InstallStatus.NotInstalled;
+            }
+            return loader ? InstallStatus.Installed : InstallStatus.LoaderMissing;
+        }
+    }
+}

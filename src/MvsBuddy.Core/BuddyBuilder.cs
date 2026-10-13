@@ -2,7 +2,9 @@ using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MvsBuddy.Catalog;
+using MvsBuddy.Changes;
 using MvsBuddy.Games;
+using MvsBuddy.Installs;
 
 namespace MvsBuddy;
 
@@ -18,6 +20,7 @@ public sealed class BuddyBuilder
     private GitHubRepository paks = new("openversus", "ovs-paks");
     private string testingPaksTag = "paks-current";
     private HostSystem? host;
+    private AsiLoaderPin loaderPin = AsiLoaderPin.Default;
 
     /// <summary>Where the buddy logs. Default: nowhere.</summary>
     public BuddyBuilder Logging(ILoggerFactory factory)
@@ -55,6 +58,13 @@ public sealed class BuddyBuilder
         return this;
     }
 
+    /// <summary>The Ultimate ASI Loader build to install and to recognise. Default <see cref="AsiLoaderPin.Default"/>.</summary>
+    public BuddyBuilder AsiLoader(AsiLoaderPin pin)
+    {
+        loaderPin = pin ?? throw new ArgumentNullException(nameof(pin));
+        return this;
+    }
+
     /// <summary>Stands in for this machine (tests).</summary>
     internal BuddyBuilder Host(HostSystem system)
     {
@@ -68,7 +78,10 @@ public sealed class BuddyBuilder
         bool ownsHttp = http == null;
         var client = http ?? new HttpClient();
         var releases = new ReleaseCatalog(client, clientReleases, paks, testingPaksTag, loggerFactory.CreateLogger<ReleaseCatalog>());
-        var games = new GameFinder(host ?? HostSystem.Current(), loggerFactory.CreateLogger<GameFinder>());
-        return new Buddy(releases, games, ownsHttp ? client : null);
+        var system = host ?? HostSystem.Current();
+        var games = new GameFinder(system, loggerFactory.CreateLogger<GameFinder>());
+        var installs = new InstallReader(system, loaderPin, loggerFactory.CreateLogger<InstallReader>());
+        var changes = new InstallChanges(system, loggerFactory.CreateLogger<InstallChanges>());
+        return new Buddy(releases, games, installs, changes, ownsHttp ? client : null);
     }
 }
