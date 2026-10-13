@@ -1,0 +1,30 @@
+# Formatting rules for C#. Applied with `dotnet format` from this directory.
+root = true
+
+# No tabs anywhere in this tree.
+[*]
+indent_style = space
+indent_size = 4
+
+[*.cs]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+insert_final_newline = true
+
+# Every if/else/for/foreach/while/using/lock body gets braces (IDE0011). An error, so a build
+# fails on it (EnforceCodeStyleInBuild in Directory.Build.props). A one-line `{ get; set; }` or a
+# single-expression `=>` is fine: nothing below asks for those to be expanded.
+csharp_prefer_braces = true:error
+
+# One statement per line. Blocks are left alone here because `false` also unrolls every
+# auto-property (`{ get; }`) onto three lines; the one-line blocks were expanded by hand
+# on 2026-09-24 and IDE0011 above keeps new brace-less bodies out.
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_statements = false
+
+# Allman braces, and else/catch/finally on their own line.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
