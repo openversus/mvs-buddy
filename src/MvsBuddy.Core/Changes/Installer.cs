@@ -260,7 +260,9 @@ public sealed class Installer
         int paksMoved = 0;
         if (state.SavedPaksDirectory == null)
         {
-            summary.Add("The paks are not installed: the buddy cannot tell which Wine prefix this copy runs in.");
+            summary.Add(state.NeedsFirstLaunch
+                ? "The paks are not installed: " + InstallReader.FirstLaunchNote
+                : "The paks are not installed: the buddy cannot tell which Wine prefix this copy runs in.");
         }
         else
         {

@@ -1,0 +1,3 @@
+[submodule "external/RmlUiFlat"]
+	path = external/RmlUiFlat
+	url = https://github.com/openversus/RmlUiFlat.git

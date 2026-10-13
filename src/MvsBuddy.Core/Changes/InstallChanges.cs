@@ -28,9 +28,10 @@ public sealed class InstallChanges
 
     /// <summary>
     /// Disables OpenVersus: holds every file of its installed layout, any older layout's files, and its paks, both in the
-    /// profile and any found in the game's own folders. The loader stays: without the plugin it loads nothing of ours, and
-    /// other ASI mods may need it. Restoring puts the files back, except the paks from the game's folders, which go to
-    /// the profile where the mod keeps them (back where they were, when the profile's paks folder is unknown).
+    /// profile and any found in the game's own folders. Ultimate ASI Loader and its license go too when an install by the
+    /// buddy put them there (its undo set lists them as placed); a loader put there some other way stays, since something
+    /// else may use it. Restoring puts the files back, except the paks from the game's folders, which go to the profile
+    /// where the mod keeps them (back where they were, when the profile's paks folder is unknown).
     /// </summary>
     public ChangePlan HoldOpenVersus(InstallState state)
     {
@@ -39,7 +40,18 @@ public sealed class InstallChanges
             .Concat(state.Paks.Select(p => (p.Path, p.Path)));
         // Where the profile's paks folder is unknown, they still go: a game without the mod should not mount them.
         files = files.Concat(state.PaksInGame.Select(p => (p.Path, state.SavedPaksDirectory == null ? p.Path : Path.Combine(state.SavedPaksDirectory, p.Name))));
+        files = files.Concat(LoaderPlacedByBuddy(state).Select(f => (f, f)));
         return Hold(state, OpenVersusSet, files.ToList(), $"There is nothing of {OpenVersusSet} here to hold.");
+    }
+
+    // Ultimate ASI Loader and its license, where they are now, when an install by the buddy placed them there.
+    private IEnumerable<string> LoaderPlacedByBuddy(InstallState state)
+    {
+        var placed = new HashSet<string>(state.Held.Where(h => h.IsRecorded).SelectMany(h => h.Placed),
+            host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        return state.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.Path)
+            .Append(Path.Combine(state.Game.Win64Directory, Installer.LicenseName))
+            .Where(f => placed.Contains(f) && File.Exists(f));
     }
 
     /// <summary>

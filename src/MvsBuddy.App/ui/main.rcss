@@ -1,0 +1,106 @@
+/* RmlUi has no default style sheet: every element's display is set here. */
+body, div, p, h2, h3, ul, li { display: block; }
+p, li { word-break: break-word; }
+
+body {
+    width: 100%;
+    height: 100%;
+    background-color: #181b22;
+    color: #e6e9ef;
+    font-family: Lato;
+    font-size: 16dp;
+}
+
+#header {
+    height: 52dp;
+    padding: 0 24dp;
+    background-color: #20242e;
+    border-bottom: 1dp #2c3240;
+    line-height: 52dp;
+}
+
+.title { font-size: 20dp; font-weight: bold; }
+
+#version { margin-left: 12dp; font-size: 13dp; color: #7d8596; }
+
+#content {
+    position: absolute;
+    top: 53dp;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20dp 24dp;
+    overflow-y: auto;
+}
+
+/* RmlUi draws no scrollbar without a style for one. */
+scrollbarvertical { width: 10dp; margin-left: 4dp; }
+scrollbarvertical slidertrack { background-color: #181b22; }
+scrollbarvertical sliderbar { background-color: #3a4152; border-radius: 5dp; min-height: 30dp; }
+scrollbarvertical sliderbar:hover { background-color: #4a5266; }
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; height: 0; }
+
+h2 { font-size: 20dp; font-weight: bold; margin: 4dp 0 10dp 0; }
+h3 { font-size: 15dp; font-weight: bold; color: #aeb5c4; margin: 22dp 0 8dp 0; }
+p { margin: 0 0 8dp 0; line-height: 22dp; }
+
+.strong { font-weight: bold; }
+.muted { color: #7d8596; font-size: 14dp; }
+.path { color: #9aa3b5; font-size: 14dp; word-break: break-all; }
+.working { color: #aeb5c4; }
+
+.card {
+    padding: 12dp 16dp;
+    margin: 0 0 16dp 0;
+    background-color: #20242e;
+    border: 1dp #2c3240;
+    border-radius: 6dp;
+}
+
+.message { padding: 10dp 14dp; border-radius: 6dp; margin: 6dp 0 12dp 0; }
+.message.good { background-color: #1e3a2a; color: #b9f0c9; }
+.message.bad { background-color: #3d2224; color: #ffc9c9; }
+p.bad { color: #ff9b9b; }
+
+.actions { margin: 14dp 0 6dp 0; }
+.row { margin: 4dp 0; }
+
+button {
+    display: inline-block;
+    margin: 0 10dp 10dp 0;
+    padding: 8dp 16dp;
+    background-color: #2c3240;
+    border: 1dp #3a4152;
+    border-radius: 6dp;
+    color: #e6e9ef;
+    font-weight: bold;
+    cursor: pointer;
+}
+button:hover { background-color: #363d4e; }
+button.primary { background-color: #3b6fe0; border-color: #3b6fe0; }
+button.primary:hover { background-color: #5a88f0; }
+button.small { padding: 4dp 10dp; font-size: 13dp; font-weight: normal; }
+
+input {
+    display: inline-block;
+    width: 420dp;
+    margin: 0 10dp 10dp 0;
+    padding: 8dp 10dp;
+    background-color: #11141a;
+    border: 1dp #3a4152;
+    border-radius: 6dp;
+    color: #e6e9ef;
+}
+input:focus { border-color: #3b6fe0; }
+
+ul { margin: 0; padding: 0; }
+li { margin: 0 0 8dp 0; padding-left: 14dp; line-height: 21dp; color: #c9cfdb; }
+
+/* No scrolling of its own: RmlUi lays out break-all text one letter wide in a scroll box inside the page's. */
+.steps {
+    padding: 8dp 12dp;
+    background-color: #11141a;
+    border-radius: 6dp;
+}
+.steps p { font-size: 12dp; line-height: 17dp; color: #9aa3b5; margin: 0 0 4dp 0; word-break: break-all; }

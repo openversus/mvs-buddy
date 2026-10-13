@@ -110,7 +110,12 @@ public sealed class InstallReader
         {
             notes.Add($"The game's Content{Path.DirectorySeparatorChar}Paks holds paks that are neither the game's nor OpenVersus's ({string.Join(", ", otherPaks.Select(p => Relative(game_, p.Path)))}); another mod's, such as MVS Infinite's, which would conflict too.");
         }
-        if (savedPaks == null)
+        bool notStarted = NotStartedYet(game);
+        if (notStarted)
+        {
+            notes.Add(FirstLaunchNote);
+        }
+        else if (savedPaks == null)
         {
             notes.Add("The buddy cannot tell which Wine prefix this copy runs in, so it cannot see the mod's paks.");
         }
@@ -152,6 +157,7 @@ public sealed class InstallReader
             OtherPlugins = others,
             Held = held,
             DeniedFolders = denied,
+            NeedsFirstLaunch = notStarted,
             Notes = notes,
         };
         log.LogInformation("{Folder}: {Status}, {Layout} layout {Version}, loaders [{Loaders}], other plugins [{Others}], {Paks} paks in {SavedPaks}",
@@ -187,6 +193,14 @@ public sealed class InstallReader
     /// prefix, in the folder of the prefix's user: Proton's is <c>steamuser</c>; another prefix's is the one already
     /// holding the game's saved files, else the only one there besides <c>Public</c>. Null when there is no prefix.
     /// </summary>
+    internal const string FirstLaunchNote =
+        "MultiVersus has not been started on this computer yet, so the folder its paks go in does not exist. Start the game once and close it, then install.";
+
+    // Under Wine, a prefix that is known (Steam's compatdata) but not made yet: Proton makes it the first time the game
+    // starts. The buddy does not make it, or Proton would find a half-made prefix.
+    private bool NotStartedYet(GameInstall game) =>
+        !host.IsWindows && game.WinePrefix != null && !Directory.Exists(Path.Combine(game.WinePrefix, "drive_c"));
+
     internal string? SavedPaksDirectory(GameInstall game)
     {
         string[] fromLocal = ["MultiVersus", "Saved", "Paks"];
@@ -195,7 +209,7 @@ public sealed class InstallReader
             string? local = host.Environment("LOCALAPPDATA");
             return local == null ? null : Path.Combine([local, .. fromLocal]);
         }
-        if (game.WinePrefix == null)
+        if (game.WinePrefix == null || NotStartedYet(game))
         {
             return null;
         }

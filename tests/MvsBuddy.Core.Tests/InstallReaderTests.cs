@@ -28,9 +28,11 @@ public sealed class InstallReaderTests : IDisposable
             Environment = name => name == "LOCALAPPDATA" ? tree.Path("AppData", "Local") : null,
         }).Build().Installs;
 
+    // A Steam install whose Proton prefix Proton has made (the game was started once).
     private GameInstall Steam(out string win64)
     {
         win64 = tree.Game("steamapps", "common", "MultiVersus");
+        Directory.CreateDirectory(tree.Path("steamapps", "compatdata", "1818750", "pfx", "drive_c", "users"));
         return new GameInstall(win64, GameStore.Steam, FoundBy.SteamLibrary) { WinePrefix = tree.Path("steamapps", "compatdata", "1818750", "pfx") };
     }
 
@@ -291,10 +293,25 @@ public sealed class InstallReaderTests : IDisposable
     }
 
     [Fact]
-    public void A_proton_prefix_before_the_first_launch_will_be_steamusers()
+    public void A_proton_prefix_not_made_yet_asks_for_the_game_to_be_started_once_first()
+    {
+        var game = Steam(out _);
+        Directory.Delete(tree.Path("steamapps", "compatdata"), recursive: true);
+
+        var state = Reader().Read(game);
+
+        Assert.True(state.NeedsFirstLaunch);
+        Assert.Null(state.SavedPaksDirectory);
+        Assert.Contains(state.Notes, n => n.Contains("Start the game once", StringComparison.Ordinal));
+        Assert.DoesNotContain(state.Notes, n => n.Contains("cannot tell which Wine prefix", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_proton_prefix_the_game_has_not_saved_in_yet_will_be_steamusers()
     {
         var game = Steam(out _);
 
+        Assert.False(Reader().Read(game).NeedsFirstLaunch);
         Assert.Equal(tree.Path("steamapps", "compatdata", "1818750", "pfx", "drive_c", "users", "steamuser", "AppData", "Local", "MultiVersus", "Saved", "Paks"),
             Reader().Read(game).SavedPaksDirectory);
     }

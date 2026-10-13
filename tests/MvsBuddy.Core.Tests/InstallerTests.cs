@@ -43,6 +43,8 @@ public sealed class InstallerTests : IDisposable
         if (!File.Exists(Path.Combine(Win64, GameFiles.ExecutableName)))
         {
             tree.Game("steamapps", "common", "MultiVersus");
+            // Started once, so Proton has made its prefix.
+            Directory.CreateDirectory(tree.Path("steamapps", "compatdata", "1818750", "pfx", "drive_c", "users"));
         }
         return new GameInstall(Win64, GameStore.Steam, FoundBy.SteamLibrary) { WinePrefix = tree.Path("steamapps", "compatdata", "1818750", "pfx") };
     }
@@ -84,6 +86,7 @@ public sealed class InstallerTests : IDisposable
     public void A_fresh_install_into_a_folder_that_does_not_exist_makes_it()
     {
         var buddy = Buddy();
+        Directory.CreateDirectory(tree.Path("pfx", "drive_c"));
         var game = new GameInstall(tree.Path("new", "Win64"), GameStore.Unknown, FoundBy.Chosen) { Verified = false, UnverifiedReason = "test", WinePrefix = tree.Path("pfx") };
         var state = buddy.Installs.Read(game);
 
@@ -319,6 +322,28 @@ public sealed class InstallerTests : IDisposable
 
         Assert.Equal(before, Snapshot());
         Assert.Equal(InstallStatus.NotInstalled, buddy.Installs.Read(Game()).Status);
+    }
+
+    [Fact]
+    public void Turning_off_an_install_the_buddy_made_takes_its_loader_along_and_turning_on_brings_it_back()
+    {
+        Game();
+        var buddy = Buddy();
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+        string loader = Path.Combine(Win64, "version.dll"), license = Path.Combine(Win64, Installer.LicenseName);
+        var installed = Snapshot();
+
+        buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
+
+        var off = buddy.Installs.Read(Game());
+        Assert.Equal(InstallStatus.Disabled, off.Status);
+        Assert.Empty(off.Loaders);
+        Assert.False(File.Exists(license));
+
+        buddy.Changes.Restore(off, InstallChanges.OpenVersusSet).Apply();
+
+        Assert.Equal(installed, Snapshot());
+        Assert.True(File.Exists(loader));
     }
 
     [Fact]

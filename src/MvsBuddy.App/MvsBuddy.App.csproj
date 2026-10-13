@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The buddy people double-click: one self-contained executable per platform, with RmlUi's native library, the fonts
+       and the UI inside it. Publish with -r win-x64 or -r linux-x64. RmlUi comes from the RmlUiFlat submodule, whose
+       native library is built by scripts/build-native.sh. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>MvsBuddy</AssemblyName>
+    <RootNamespace>MvsBuddy.App</RootNamespace>
+    <!-- Builds without -r run on this machine's platform; RuntimeIdentifier is needed for the self-contained settings. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- rmlui_c rides inside the executable and is extracted beside it at first run. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <!-- The executable alone in the publish folder: no .pdb or .xml from the referenced projects beside it. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <RmlUiFlat>$(MSBuildThisFileDirectory)../../external/RmlUiFlat/</RmlUiFlat>
+    <RmlUiNative Condition="$(RuntimeIdentifier.StartsWith('win'))">$(RmlUiFlat)native/build/win-desktop/rmlui_c.dll</RmlUiNative>
+    <RmlUiNative Condition="'$(RmlUiNative)' == ''">$(RmlUiFlat)native/build/linux-sniper/librmlui_c.so</RmlUiNative>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MvsBuddy.Core/MvsBuddy.Core.csproj" />
+    <ProjectReference Include="$(RmlUiFlat)src/RmlUi.Net.Desktop/RmlUi.Net.Desktop.csproj" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <!-- Everything RmlUi loads by path, embedded under that path: the executable runs from any folder with nothing beside it.
+       The licenses of what is linked into rmlui_c travel inside it too. -->
+  <ItemGroup>
+    <EmbeddedResource Include="ui/**" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Regular.ttf" LogicalName="fonts/LatoLatin-Regular.ttf" />
+    <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Bold.ttf" LogicalName="fonts/LatoLatin-Bold.ttf" />
+    <EmbeddedResource Include="$(RmlUiFlat)THIRD-PARTY-NOTICES.txt" LogicalName="THIRD-PARTY-NOTICES.txt" />
+    <None Include="$(RmlUiNative)" Condition="Exists('$(RmlUiNative)')" Link="$([System.IO.Path]::GetFileName('$(RmlUiNative)'))"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="RequireRmlUiNative" BeforeTargets="Build">
+    <Error Condition="!Exists('$(RmlUiNative)')" Text="No $(RmlUiNative): run scripts/build-native.sh first (and git submodule update --init --recursive)." />
+  </Target>
+</Project>

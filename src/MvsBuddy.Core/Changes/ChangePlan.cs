@@ -46,10 +46,15 @@ public sealed class ChangePlan
 
     /// <summary>
     /// The folders the plan changes that this account may not change, as the system answers now; empty when it may change
-    /// them all. A folder the plan would make is judged by the nearest one above it that exists.
+    /// them all. A folder the plan would make is judged by the nearest one above it that exists. A folder inside another
+    /// one listed is left out: permission for the outer one covers it.
     /// </summary>
-    public IReadOnlyList<string> DeniedFolders() =>
-        folders.Distinct(host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Where(host.ChangeDeniedIn).ToList();
+    public IReadOnlyList<string> DeniedFolders()
+    {
+        var comparison = host.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var denied = folders.Distinct(host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).Where(host.ChangeDeniedIn).ToList();
+        return denied.Where(f => !denied.Any(outer => f.StartsWith(outer + Path.DirectorySeparatorChar, comparison))).ToList();
+    }
 
     /// <summary>
     /// Makes the changes. Refused, with nothing touched, while the game is running, when a condition of the plan fails (a

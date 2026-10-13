@@ -224,8 +224,9 @@ public sealed class InstallChangesTests : IDisposable
 
         var e = Assert.Throws<ChangeException>(plan.Apply);
 
-        Assert.NotEmpty(e.DeniedFolders);
-        Assert.All(e.DeniedFolders, f => Assert.StartsWith(data + Path.DirectorySeparatorChar, f, StringComparison.Ordinal));
+        // The held set's folders, from the first one the plan would make: the ones inside it are covered by it.
+        string files = Assert.Single(e.DeniedFolders);
+        Assert.StartsWith(data + Path.DirectorySeparatorChar, files, StringComparison.Ordinal);
         Assert.False(Directory.Exists(data));
     }
 

@@ -145,6 +145,12 @@ public sealed record InstallState
     /// </summary>
     public IReadOnlyList<string> DeniedFolders { get; init; } = [];
 
+    /// <summary>
+    /// Under Wine: the game's prefix is not made yet, because the game has never been started there, so the paks have
+    /// nowhere to go. The person starts the game once first; <see cref="Notes"/> says so.
+    /// </summary>
+    public bool NeedsFirstLaunch { get; init; }
+
     /// <summary>Things worth telling the person, in plain sentences; empty when nothing stands out.</summary>
     public required IReadOnlyList<string> Notes { get; init; }
 

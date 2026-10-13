@@ -22,6 +22,12 @@ public sealed class BuddyBuilder
     private HostSystem? host;
     private AsiLoaderPin loaderPin = AsiLoaderPin.Default;
 
+    /// <summary>
+    /// The buddy's own folder on this machine (<c>%LOCALAPPDATA%\mvs-buddy</c>, or <c>~/.local/share/mvs-buddy</c>), where
+    /// it keeps downloads and held files, and where an app can put its logs.
+    /// </summary>
+    public static string DefaultDataDirectory => HostSystem.Current().DataDirectory;
+
     /// <summary>Where the buddy logs. Default: nowhere.</summary>
     public BuddyBuilder Logging(ILoggerFactory factory)
     {
