@@ -7,7 +7,7 @@ namespace MvsBuddy.Installs;
 /// <summary>Whose a file the game did not ship is, as far as the buddy can tell.</summary>
 public enum ExtraKind
 {
-    /// <summary>OpenVersus: its plugin and files, the loader, its paks.</summary>
+    /// <summary>OpenVersus: its plugin and files, its paks.</summary>
     OpenVersus,
 
     /// <summary>MVS Infinite: its plugin, and paks whose names say so.</summary>
@@ -15,6 +15,12 @@ public enum ExtraKind
 
     /// <summary>Anything else: another mod, a tool, a backup someone made.</summary>
     Other,
+
+    /// <summary>
+    /// Ultimate ASI Loader and its license, which every ASI plugin loads through. Not the person's pick: a clean start sets
+    /// it aside only when no plugin stays (see <see cref="Changes.InstallChanges.CleanStart"/>).
+    /// </summary>
+    Loader,
 }
 
 /// <summary>A file in the game's folder that the game did not ship.</summary>
@@ -54,8 +60,11 @@ public sealed class StockCheck
         this.log = log;
     }
 
-    /// <summary>The files in <paramref name="state"/>'s game folder the game did not ship, and the shipped ones that are gone.</summary>
-    public StockReport Read(InstallState state)
+    /// <summary>
+    /// Why a clean start cannot be offered for <paramref name="state"/>'s copy, in a plain sentence; null when it can. Cheap:
+    /// it looks for the manifests without reading them (<see cref="Read"/> reports a manifest it then cannot read).
+    /// </summary>
+    public string? Unavailable(InstallState state)
     {
         if (state == null)
         {
@@ -63,15 +72,30 @@ public sealed class StockCheck
         }
         if (!state.Game.Verified)
         {
-            return new StockReport(null, false, [], [], ["This folder is not recognisably the game, so the buddy cannot tell where the game's folder starts."]);
+            return "This folder is not recognisably the game, so the buddy cannot tell where the game's folder starts.";
         }
-        string root = Path.GetFullPath(Path.Combine(state.Game.Win64Directory, "..", "..", ".."));
-        var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var manifests = Directory.Exists(root) ? Directory.EnumerateFiles(root, "Manifest_*.txt").ToList() : [];
-        if (manifests.Count == 0)
+        string root = Root(state);
+        return Directory.Exists(root) && Directory.EnumerateFiles(root, "Manifest_*.txt").Any() ? null
+            : "This copy has no Manifest_*.txt files, so the buddy cannot tell the game's own files from added ones.";
+    }
+
+    // The game's install folder (Steam's steamapps/common/MultiVersus).
+    private static string Root(InstallState state) => Path.GetFullPath(Path.Combine(state.Game.Win64Directory, "..", "..", ".."));
+
+    /// <summary>The files in <paramref name="state"/>'s game folder the game did not ship, and the shipped ones that are gone.</summary>
+    public StockReport Read(InstallState state)
+    {
+        if (state == null)
         {
-            return new StockReport(root, false, [], [], ["This copy has no Manifest_*.txt files, so the buddy cannot tell the game's own files from added ones."]);
+            throw new ArgumentNullException(nameof(state));
         }
+        if (Unavailable(state) is string reason)
+        {
+            return new StockReport(state.Game.Verified ? Root(state) : null, false, [], [], [reason]);
+        }
+        string root = Root(state);
+        var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var manifests = Directory.EnumerateFiles(root, "Manifest_*.txt").ToList();
         var stock = new HashSet<string>(comparer);
         var loose = new List<string>();
         try
@@ -86,9 +110,9 @@ public sealed class StockCheck
 
 
         var openVersus = new HashSet<string>(
-            state.Mod.Files.Concat(state.Mod.OldLayoutFiles).Concat(state.PaksInGame.Select(p => p.Path))
-                .Concat(state.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.Path))
-                .Append(Path.Combine(state.Game.Win64Directory, Changes.Installer.LicenseName)), comparer);
+            state.Mod.Files.Concat(state.Mod.OldLayoutFiles).Concat(state.PaksInGame.Select(p => p.Path)), comparer);
+        var loader = new HashSet<string>(state.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.Path)
+            .Append(Path.Combine(state.Game.Win64Directory, Changes.Installer.LicenseName)), comparer);
         var mvsInfinite = new HashSet<string>(
             state.OtherPlugins.Where(p => p.IsMvsInfinite).Select(p => p.Path).Concat(state.OtherPaks.Where(p => p.IsMvsInfinite).Select(p => p.Path)), comparer);
 
@@ -102,7 +126,8 @@ public sealed class StockCheck
             {
                 continue;
             }
-            var kind = openVersus.Contains(file) ? ExtraKind.OpenVersus : mvsInfinite.Contains(file) ? ExtraKind.MvsInfinite : ExtraKind.Other;
+            var kind = openVersus.Contains(file) ? ExtraKind.OpenVersus : mvsInfinite.Contains(file) ? ExtraKind.MvsInfinite
+                : loader.Contains(file) ? ExtraKind.Loader : ExtraKind.Other;
             extras.Add(new StockExtra(file, relative, new FileInfo(file).Length, kind));
         }
         var missing = loose.Where(f => !present.Contains(f)).Distinct(comparer).ToList();

@@ -1,4 +1,5 @@
 using System.Text;
+using MvsBuddy.Catalog;
 using MvsBuddy.Changes;
 using MvsBuddy.Games;
 using MvsBuddy.Installs;
@@ -70,7 +71,7 @@ public sealed class InstallChangesTests : IDisposable
         Assert.Empty(state.PaksInGame);
         Assert.True(Directory.Exists(SavedPaks));
         var set = Assert.Single(state.Held);
-        Assert.Equal(InstallChanges.OpenVersusSet, set.Name);
+        Assert.Equal(InstallChanges.OpenVersusSetFor(Channel.Testing), set.Name);
         Assert.True(set.IsRecorded);
         Assert.Equal(7, set.Entries.Count(e => e.IsHeld));
         Assert.StartsWith(data, set.Folder);
@@ -83,7 +84,7 @@ public sealed class InstallChangesTests : IDisposable
         var buddy = Buddy();
         buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
 
-        buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSet).Apply();
+        buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSetFor(Channel.Testing)).Apply();
 
         var state = buddy.Installs.Read(Game());
         Assert.Equal(InstallStatus.Installed, state.Status);
@@ -101,6 +102,7 @@ public sealed class InstallChangesTests : IDisposable
         var buddy = Buddy();
         buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
         tree.File("reinstalled", [.. Rel(Win64), "plugins", "OpenVersus", "OpenVersus_2026.10.13.01.asi"]);
+        tree.File(Fixture("OpenVersus.testing.toml"), [.. Rel(Win64), "plugins", "OpenVersus", "OpenVersus.toml"]);
 
         var e = Assert.Throws<ChangeException>(() => buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply());
 
@@ -116,7 +118,7 @@ public sealed class InstallChangesTests : IDisposable
         buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
         string reinstalled = tree.File("reinstalled", [.. Rel(Win64), "plugins", "OpenVersus", "OpenVersus.toml"]);
 
-        var e = Assert.Throws<ChangeException>(() => buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSet).Apply());
+        var e = Assert.Throws<ChangeException>(() => buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSetFor(Channel.Testing)).Apply());
 
         Assert.Contains(reinstalled, e.Message);
         Assert.Equal("reinstalled", File.ReadAllText(reinstalled));
@@ -155,7 +157,7 @@ public sealed class InstallChangesTests : IDisposable
         Assert.Equal(InstallStatus.Disabled, after.Status);
         Assert.True(File.Exists(mvsi));
         Assert.True(File.Exists(mvsiPak));
-        Assert.Equal([InstallChanges.OpenVersusSet], after.Held.Select(h => h.Name));
+        Assert.Equal([InstallChanges.OpenVersusSetFor(Channel.Testing)], after.Held.Select(h => h.Name));
         Assert.Contains(after.Notes, n => n.Contains("MVS Infinite") && n.Contains("cannot run alongside"));
     }
 
@@ -277,7 +279,7 @@ public sealed class InstallChangesTests : IDisposable
             Assert.All(held.Entries, e => Assert.True(e.IsHeld));
             Assert.All(files.Keys, f => Assert.False(File.Exists(f)));
 
-            buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSet).Apply();
+            buddy.Changes.Restore(buddy.Installs.Read(Game()), InstallChanges.OpenVersusSetFor(Channel.Testing)).Apply();
             Assert.All(files, f => Assert.Equal(f.Value, File.ReadAllText(f.Key)));
         }
         finally
@@ -306,5 +308,24 @@ public sealed class InstallChangesTests : IDisposable
         buddy.Changes.Discard(state, set.Name).Apply();
 
         Assert.Empty(buddy.Installs.Read(Game()).Held);
+    }
+
+    [Fact]
+    public void Deleting_a_held_set_for_good_takes_its_folder_and_leaves_the_game_alone()
+    {
+        InstallOpenVersus();
+        var buddy = Buddy();
+        buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
+        var off = buddy.Installs.Read(Game());
+        var set = Assert.Single(off.Held);
+        var game = Directory.EnumerateFiles(tree.Path("steamapps"), "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToList();
+
+        buddy.Changes.Discard(off, set.Name).Apply();
+
+        var after = buddy.Installs.Read(Game());
+        Assert.Empty(after.Held);
+        Assert.Equal(InstallStatus.LoaderOnly, after.Status); // the loader was not the buddy's, so turning off left it
+        Assert.False(Directory.Exists(Path.GetDirectoryName(set.Folder)), "the copy's folder goes when its last set does");
+        Assert.Equal(game, Directory.EnumerateFiles(tree.Path("steamapps"), "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
     }
 }

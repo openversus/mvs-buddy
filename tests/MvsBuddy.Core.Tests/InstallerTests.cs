@@ -340,10 +340,116 @@ public sealed class InstallerTests : IDisposable
         Assert.Empty(off.Loaders);
         Assert.False(File.Exists(license));
 
-        buddy.Changes.Restore(off, InstallChanges.OpenVersusSet).Apply();
+        buddy.Changes.Restore(off, InstallChanges.OpenVersusSetFor(Channel.Testing)).Apply();
 
         Assert.Equal(installed, Snapshot());
         Assert.True(File.Exists(loader));
+    }
+
+    [Fact]
+    public void Turning_off_keeps_the_loader_the_buddy_installed_while_another_asi_plugin_loads_through_it()
+    {
+        Game();
+        var buddy = Buddy();
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+        tree.File("mvsi", [.. Rel(Win64), "plugins", "MVSIASI.asi"]);
+
+        buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
+
+        var off = buddy.Installs.Read(Game());
+        Assert.Equal(InstallStatus.Disabled, off.Status);
+        Assert.True(File.Exists(Path.Combine(Win64, "version.dll")));
+        Assert.True(File.Exists(Path.Combine(Win64, Installer.LicenseName)));
+    }
+
+    [Fact]
+    public void An_install_writes_down_its_channel_beside_the_mod_and_undoing_it_puts_the_guess_back()
+    {
+        Season1Installed();
+        Game();
+        var buddy = Buddy();
+        var before = buddy.Installs.Read(Game());
+        Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Server), before.Channel);
+        Assert.Null(before.Record);
+        var prod = Testing with { Tag = "2026.10.13.01", Channel = Channel.Prod };
+
+        buddy.Installer.Plan(before, prod, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+
+        // The release's settings point at the testing server; what the buddy installed is what counts.
+        var after = buddy.Installs.Read(Game());
+        Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Install), after.Channel);
+        var record = after.Record!;
+        Assert.Equal(("2026.10.13.01", "2026.10.13.01"), (record.Tag, record.Version));
+        Assert.Equal(("OpenVersus_2026.10.13.01.asi", Sha(Encoding.UTF8.GetBytes("asi 2026.10.13.01"))), (record.Plugin!.Name, record.Plugin.Sha256));
+        Assert.Equal(("OVS_P.pak", Sha(Encoding.UTF8.GetBytes("pak 13"))), (record.Paks.Single().Name, record.Paks[0].Sha256));
+        Assert.Equal(("version.dll", Sha(LoaderDll)), (record.Loader!.Name, record.Loader.Sha256));
+
+        buddy.Changes.Restore(after, after.Held.Single().Name).Apply();
+
+        var undone = buddy.Installs.Read(Game());
+        Assert.False(File.Exists(Path.Combine(Win64, "plugins", "OpenVersus", InstallRecord.FileName)));
+        Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Server), undone.Channel);
+    }
+
+    [Fact]
+    public void An_install_over_one_the_buddy_made_replaces_its_record_and_undoing_it_brings_the_old_one_back()
+    {
+        Game();
+        var buddy = Buddy();
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), Testing, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+        string record = Path.Combine(Win64, "plugins", "OpenVersus", InstallRecord.FileName);
+        string first = File.ReadAllText(record);
+        var prod = Testing with { Tag = "2026.10.14.01", Channel = Channel.Prod, Version = new Version(2026, 10, 14, 1) };
+
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), prod, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+
+        var after = buddy.Installs.Read(Game());
+        Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Install), after.Channel);
+        Assert.Equal("2026.10.14.01", after.Record!.Tag);
+
+        buddy.Changes.Restore(after, after.Held.Where(h => h.Placed.Count > 0).OrderByDescending(h => h.HeldAt).First().Name).Apply();
+
+        // Both releases ship the same plugin, which the second install found in place and left: undoing it leaves it too.
+        Assert.True(File.Exists(Path.Combine(Win64, "plugins", "OpenVersus", "OpenVersus_2026.10.13.01.asi")));
+        Assert.Equal(first, File.ReadAllText(record));
+        Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Install), buddy.Installs.Read(Game()).Channel);
+    }
+
+    [Fact]
+    public void Turning_off_holds_openversus_as_its_channel_and_turning_on_brings_the_record_back()
+    {
+        Game();
+        var buddy = Buddy();
+        var prod = Testing with { Tag = "2026.10.13.01", Channel = Channel.Prod };
+        buddy.Installer.Plan(buddy.Installs.Read(Game()), prod, Stage(NewRelease(), new() { ["OVS_P.pak"] = "pak 13" }), new InstallOptions()).Plan.Apply();
+
+        buddy.Changes.HoldOpenVersus(buddy.Installs.Read(Game())).Apply();
+
+        var off = buddy.Installs.Read(Game());
+        Assert.Contains(off.Held, h => h.Name == "OpenVersus Prod");
+        Assert.Null(off.Channel);
+
+        buddy.Changes.Restore(off, "OpenVersus Prod").Apply();
+
+        Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Install), buddy.Installs.Read(Game()).Channel);
+    }
+
+    [Fact]
+    public void The_person_can_say_which_channel_a_copy_is_and_say_it_again()
+    {
+        Season1Installed();
+        Game();
+        var buddy = Buddy();
+
+        buddy.Changes.SetChannel(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+
+        var said = buddy.Installs.Read(Game());
+        Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Person), said.Channel);
+
+        buddy.Changes.SetChannel(said, Channel.Testing).Apply();
+
+        Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Person), buddy.Installs.Read(Game()).Channel);
+        Assert.Equal(Channel.Prod, said.Record!.ChannelValue);
     }
 
     [Fact]

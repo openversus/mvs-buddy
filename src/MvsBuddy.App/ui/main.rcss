@@ -81,6 +81,13 @@ button:hover { background-color: #363d4e; }
 button.primary { background-color: #3b6fe0; border-color: #3b6fe0; }
 button.primary:hover { background-color: #5a88f0; }
 button.small { padding: 4dp 10dp; font-size: 13dp; font-weight: normal; }
+button.tab { margin-right: 0; border-radius: 0; padding: 6dp 18dp; }
+button.tab.on { background-color: #3b6fe0; border-color: #3b6fe0; }
+/* Shown, not usable: the reason is in the text beside it. */
+button.off, button.off:hover { background-color: #22262f; border-color: #2c3240; color: #5d6577; cursor: arrow; }
+.release { margin: 0 0 6dp 0; }
+/* RmlUi drops the space between two inline spans: the second one keeps its distance itself. */
+.release span.muted { margin: 0 8dp; }
 
 input {
     display: inline-block;

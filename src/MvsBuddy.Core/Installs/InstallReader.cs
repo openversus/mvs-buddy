@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MvsBuddy.Catalog;
 using MvsBuddy.Games;
 
 namespace MvsBuddy.Installs;
@@ -61,6 +62,7 @@ public sealed class InstallReader
         var loaders = Loaders(win64);
         var plugins = LoadablePlugins(win64);
         var mod = Mod(win64, plugins);
+        var record = mod.Layout == ModLayout.Current ? InstallRecord.Read(Path.Combine(win64, "plugins", ModFolder, InstallRecord.FileName)) : null;
         var others = plugins.Where(p => !IsOpenVersus(p)).Select(p => new OtherPlugin(p, IsMvsInfinite(Path.GetFileName(p)))).ToList();
         string? savedPaks = SavedPaksDirectory(game);
         var paks = savedPaks == null ? [] : PakFiles(savedPaks, deep: false).Where(IsOurs).ToList();
@@ -158,6 +160,8 @@ public sealed class InstallReader
             Held = held,
             DeniedFolders = denied,
             NeedsFirstLaunch = notStarted,
+            Record = record,
+            Channel = ChannelOf(mod, record),
             Notes = notes,
         };
         log.LogInformation("{Folder}: {Status}, {Layout} layout {Version}, loaders [{Loaders}], other plugins [{Others}], {Paks} paks in {SavedPaks}",
@@ -310,6 +314,24 @@ public sealed class InstallReader
         }
         var toml = TomlSettings.Parse(text, Path.GetFileName(path));
         return new ModSettings(path, toml.Get("Server.Game", "ServerUrl"), toml.Get("Server.Prod", "ServerUrl"), toml.Get("Settings", "LogLevel"), toml.Errors);
+    }
+
+    /// <summary>The testing releases' server port; their settings point the game at it (<c>http://prod.openversus.org:8420/</c>).</summary>
+    internal const int TestingServerPort = 8420;
+
+    // What the buddy wrote down when it installed, or what the person said; else a guess from the server in the settings.
+    internal static ModChannel? ChannelOf(ModFiles mod, InstallRecord? record)
+    {
+        if (mod.Layout == ModLayout.None)
+        {
+            return null;
+        }
+        if (record?.ChannelValue is Channel recorded)
+        {
+            return new ModChannel(recorded, record.ChannelFrom == "person" ? ChannelSource.Person : ChannelSource.Install);
+        }
+        bool testing = Uri.TryCreate(mod.Settings?.GameServerUrl, UriKind.Absolute, out var server) && server.Port == TestingServerPort;
+        return new ModChannel(testing ? Channel.Testing : Channel.Prod, ChannelSource.Server);
     }
 
     private static bool IsOurs(PakFile pak) => pak.Name.StartsWith("OVS_", StringComparison.OrdinalIgnoreCase);

@@ -22,8 +22,9 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .Enrich.FromLogContext()
     .WriteTo.Console()
+    // Blocking when the queue is full: a plan of thousands of steps logs every one of them, where dropping would lose most.
     .WriteTo.Async(to => to.File(Path.Combine(BuddyBuilder.DefaultDataDirectory, "logs", "mvs-buddy-.log"),
-        rollingInterval: RollingInterval.Day, retainedFileCountLimit: 14))
+        rollingInterval: RollingInterval.Day, retainedFileCountLimit: 14), blockWhenFull: true)
     .CreateLogger();
 using var loggerFactory = new SerilogLoggerFactory(Log.Logger, dispose: true);
 var log = loggerFactory.CreateLogger("MvsBuddy");

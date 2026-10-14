@@ -58,6 +58,7 @@ public sealed class StockCheckTests : IDisposable
         Assert.True(report.HasManifests);
         Assert.Empty(report.Extras);
         Assert.Empty(report.MissingStock);
+        Assert.Null(buddy.Stock.Unavailable(buddy.Installs.Read(Game())));
     }
 
     [Fact]
@@ -83,7 +84,7 @@ public sealed class StockCheckTests : IDisposable
             "MultiVersus/Binaries/Win64/dxgi.dll:Other",
             "MultiVersus/Binaries/Win64/plugins/MVSIASI.asi:MvsInfinite",
             "MultiVersus/Binaries/Win64/plugins/OpenVersus/OpenVersus_2026.10.12.01.asi:OpenVersus",
-            "MultiVersus/Binaries/Win64/version.dll:OpenVersus",
+            "MultiVersus/Binaries/Win64/version.dll:Loader",
             "MultiVersus/Content/Paks/MVSI_Content_P.pak:MvsInfinite",
             "MultiVersus/Content/Paks/~mods/OVS_P.pak:OpenVersus",
             "MultiVersus/Content/Paks/~mods/pakchunk9-Windows.pak:Other",
@@ -114,7 +115,7 @@ public sealed class StockCheckTests : IDisposable
         var state = buddy.Installs.Read(Game());
         var picked = buddy.Stock.Read(state).Extras.Where(e => e.Kind != ExtraKind.OpenVersus);
 
-        buddy.Changes.HoldNotStock(state, picked).Apply();
+        buddy.Changes.CleanStart(state, picked).Plan.Apply();
 
         Assert.True(File.Exists(asi));
         Assert.False(File.Exists(dxgi));
@@ -130,6 +131,78 @@ public sealed class StockCheckTests : IDisposable
         Assert.Equal("a mod's pak", File.ReadAllText(mod));
     }
 
+    // OpenVersus, MVS Infinite, a loader, and a stray tool, as a copy can look after a few people have helped.
+    private void Crowded()
+    {
+        Stock();
+        tree.File("asi", W("plugins", "OpenVersus", "OpenVersus_2026.10.12.01.asi"));
+        tree.Bytes([.. Encoding.ASCII.GetBytes("MZ "), .. Encoding.Unicode.GetBytes("Ultimate ASI Loader")], W("version.dll"));
+        tree.File("license", W(Installer.LicenseName));
+        tree.File("mvsi", W("plugins", "MVSIASI.asi"));
+        tree.File("mvsi pak", "MultiVersus", "MultiVersus", "Content", "Paks", "MVSI_Content_P.pak");
+        tree.File("dxvk", W("dxgi.dll"));
+    }
+
+    [Fact]
+    public void Setting_openversus_aside_while_mvs_infinite_stays_keeps_the_loader_it_loads_through()
+    {
+        Crowded();
+        var buddy = Buddy();
+        var state = buddy.Installs.Read(Game());
+        var picked = buddy.Stock.Read(state).Extras.Where(e => e.Kind is ExtraKind.OpenVersus or ExtraKind.Loader);
+
+        var clean = buddy.Changes.CleanStart(state, picked);
+        clean.Plan.Apply();
+
+        Assert.True(File.Exists(tree.Path(W("version.dll"))));
+        Assert.True(File.Exists(tree.Path(W(Installer.LicenseName))));
+        Assert.True(File.Exists(tree.Path(W("plugins", "MVSIASI.asi"))));
+        Assert.False(File.Exists(tree.Path(W("plugins", "OpenVersus", "OpenVersus_2026.10.12.01.asi"))));
+        Assert.Contains(clean.Summary, s => s.StartsWith("Ultimate ASI Loader stays: MVSIASI.asi", StringComparison.Ordinal));
+        Assert.Equal(["OpenVersus Prod"], buddy.Installs.Read(Game()).Held.Select(h => h.Name));
+    }
+
+    [Fact]
+    public void A_clean_start_to_stock_holds_each_end_state_on_its_own_and_openversus_comes_back_with_its_loader()
+    {
+        Crowded();
+        var buddy = Buddy();
+        var state = buddy.Installs.Read(Game());
+
+        buddy.Changes.CleanStart(state, buddy.Stock.Read(state).Extras).Plan.Apply();
+
+        var after = buddy.Installs.Read(Game());
+        Assert.Empty(buddy.Stock.Read(after).Extras);
+        Assert.Equal(InstallStatus.Disabled, after.Status);
+        Assert.Equal(["MVS Infinite", "Not stock", "OpenVersus Prod"], after.Held.Select(h => h.Name.StartsWith("Not stock", StringComparison.Ordinal) ? "Not stock" : h.Name).Order(StringComparer.Ordinal));
+        var openVersus = after.Held.Single(h => h.Name == "OpenVersus Prod");
+        Assert.Contains(openVersus.Entries, e => Path.GetFileName(e.Original) == "version.dll");
+
+        buddy.Changes.Restore(after, "OpenVersus Prod").Apply();
+
+        var on = buddy.Installs.Read(Game());
+        Assert.Equal(InstallStatus.Installed, on.Status);
+        Assert.False(File.Exists(tree.Path(W("plugins", "MVSIASI.asi"))));
+        Assert.False(File.Exists(tree.Path(W("dxgi.dll"))));
+    }
+
+    [Fact]
+    public void A_clean_start_that_cannot_hold_one_part_holds_none()
+    {
+        Crowded();
+        var buddy = Buddy();
+        var state = buddy.Installs.Read(Game());
+        string elsewhere = tree.File("elsewhere", "elsewhere.asi");
+        buddy.Changes.Hold(state, InstallChanges.MvsInfiniteSet, [elsewhere]).Apply();
+        var before = Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToList();
+        state = buddy.Installs.Read(Game());
+
+        var e = Assert.Throws<ChangeException>(() => buddy.Changes.CleanStart(state, buddy.Stock.Read(state).Extras).Plan.Apply());
+
+        Assert.Contains("MVS Infinite is already held", e.Message);
+        Assert.Equal(before, Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public void Without_manifests_nothing_can_be_told_and_that_is_said()
     {
@@ -141,6 +214,7 @@ public sealed class StockCheckTests : IDisposable
         Assert.False(report.HasManifests);
         Assert.Empty(report.Extras);
         Assert.Contains(report.Notes, n => n.Contains("Manifest_"));
+        Assert.Equal(report.Notes.Single(), buddy.Stock.Unavailable(buddy.Installs.Read(Game())));
     }
 
     [SkippableFact]

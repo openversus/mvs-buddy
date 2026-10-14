@@ -45,7 +45,14 @@ internal sealed record StagedInstall(
     IReadOnlyList<(string Name, string? Path, string Sha256)> Paks,
     string LoaderDll,
     string LoaderLicense,
-    string? InstalledDefaults);
+    string? InstalledDefaults)
+{
+    /// <summary>The install zip's SHA-256, for the record; null when unknown.</summary>
+    public string? ZipSha256 { get; init; }
+
+    /// <summary>Where the paks come from, for the record.</summary>
+    public IReadOnlyList<ReleaseAsset> PakAssets { get; init; } = [];
+}
 
 /// <summary>
 /// Installs a release over whatever is there, and uninstalls. Preparing downloads and checks everything first; the plan
@@ -90,11 +97,12 @@ public sealed class Installer
         }
         var zipAsset = release.InstallZip ?? throw new ChangeException($"{release.Tag} has no install zip.");
         progress?.Report($"Downloading {zipAsset.Name}");
-        string zip = await downloads.FetchAsync(zipAsset, null, cancellationToken).ConfigureAwait(false);
+        string zip = await downloads.FetchAsync(zipAsset, Percent.Of(progress, zipAsset), cancellationToken).ConfigureAwait(false);
         string extracted = ExtractPluginFolder(zip);
 
         var paks = new List<(string, string?, string)>();
-        foreach (var asset in await catalog.PaksForAsync(release, cancellationToken).ConfigureAwait(false))
+        var pakAssets = await catalog.PaksForAsync(release, cancellationToken).ConfigureAwait(false);
+        foreach (var asset in pakAssets)
         {
             // Not downloaded when the installed copy is already this one: same size, then same checksum as GitHub's.
             string? installed = state.SavedPaksDirectory == null ? null : Path.Combine(state.SavedPaksDirectory, asset.Name);
@@ -108,7 +116,7 @@ public sealed class Installer
                 }
             }
             progress?.Report($"Downloading {asset.Name}");
-            string path = await downloads.FetchAsync(asset, null, cancellationToken).ConfigureAwait(false);
+            string path = await downloads.FetchAsync(asset, Percent.Of(progress, asset), cancellationToken).ConfigureAwait(false);
             paks.Add((asset.Name, path, asset.Sha256 ?? Downloads.Sha256Of(path)));
         }
 
@@ -118,7 +126,12 @@ public sealed class Installer
         string license = await downloads.FetchAsync(pin.LicenseUrl, LicenseName, pin.LicenseSha256, null, cancellationToken).ConfigureAwait(false);
 
         string? defaults = await InstalledDefaultsAsync(state, cancellationToken).ConfigureAwait(false);
-        var prepared = Plan(state, release, new StagedInstall(extracted, paks, loader, license, defaults), options ?? new InstallOptions());
+        var staged = new StagedInstall(extracted, paks, loader, license, defaults)
+        {
+            ZipSha256 = zipAsset.Sha256 ?? Downloads.Sha256Of(zip),
+            PakAssets = pakAssets,
+        };
+        var prepared = Plan(state, release, staged, options ?? new InstallOptions());
         var notChecked = new[] { zipAsset }.Concat(release.Assets.Where(a => paks.Any(p => p.Item1 == a.Name))).Where(a => a.Sha256 == null).Select(a => a.Name).Distinct().ToList();
         return notChecked.Count == 0 ? prepared
             : new PreparedInstall(release, prepared.Plan, prepared.Settings,
@@ -296,12 +309,39 @@ public sealed class Installer
             summary.Add($"{state.PaksInGame.Count} OpenVersus paks found in the game's own folders are set aside; the checked copies go where the mod keeps them.");
         }
 
+        // What was installed, from where, and for which channel, written down beside the mod.
+        string recordPath = Path.Combine(home, InstallRecord.FileName);
+        if (File.Exists(recordPath))
+        {
+            backup.Add(recordPath);
+        }
+        string modHome = Path.Combine("plugins", "OpenVersus");
+        var asi = shipped.FirstOrDefault(f => Path.GetDirectoryName(f.Relative) == modHome && f.Relative.EndsWith(".asi", StringComparison.OrdinalIgnoreCase));
+        var record = new InstallRecord
+        {
+            Channel = release.Channel.ToString(),
+            Tag = release.Tag,
+            Version = release.Version == null ? null : ModVersion.Text(release.Version),
+            At = DateTimeOffset.Now,
+            Buddy = BuddyVersion.Current,
+            Zip = release.InstallZip is { } zipAsset ? new RecordedFile { Name = zipAsset.Name, Url = zipAsset.DownloadUrl.ToString(), Sha256 = staged.ZipSha256 ?? zipAsset.Sha256 } : null,
+            Plugin = asi.Path == null ? null : new RecordedFile { Name = Path.GetFileName(asi.Path), Sha256 = Downloads.Sha256Of(asi.Path) },
+            Paks = staged.Paks.Select(p => new RecordedFile
+            {
+                Name = p.Name,
+                Url = staged.PakAssets.FirstOrDefault(a => string.Equals(a.Name, p.Name, StringComparison.OrdinalIgnoreCase))?.DownloadUrl.ToString(),
+                Sha256 = p.Sha256,
+            }).ToList(),
+            Loader = new RecordedFile { Name = loaderName, Version = pin.Version, Sha256 = pin.DllSha256 },
+        };
+
         // Every install keeps a set that undoes it: what it replaces or retires, and the list of what it puts in place.
         var distinctBackup = backup.Distinct().ToList();
         var placed = moves.Select(m => m.To)
             .Concat(writeLoader ? [Path.Combine(win64, loaderName)] : [])
             .Concat(writeLicense ? [licenseTarget] : [])
             .Concat(merge != null ? [theirsPath] : [])
+            .Append(recordPath)
             .Distinct().ToList();
         string set = $"Before {version} {DateTimeOffset.Now:yyyy-MM-dd HHmmss}";
         changes.AddHold(plan, state, set, distinctBackup.Select(f => (f, f)).ToList(), placed);
@@ -327,6 +367,7 @@ public sealed class Installer
         {
             plan.Write(theirsPath, System.Text.Encoding.UTF8.GetBytes(merge.Text));
         }
+        plan.Write(recordPath, record.ToJson());
         if (unchanged > 0)
         {
             summary.Add(unchanged == 1 ? "1 of the release's files is already in place." : $"{unchanged} of the release's files are already in place.");
@@ -384,6 +425,24 @@ public sealed class Installer
             throw new DownloadException($"The {pin.DllName} in {Path.GetFileName(zip)} is not the build the buddy expects; it is not installed.");
         }
         return target;
+    }
+
+    // A download's bytes as "Downloading X (42%)", once per percent, for a progress line a person can watch move.
+    private sealed class Percent(IProgress<string> report, ReleaseAsset asset) : IProgress<long>
+    {
+        private int last = -1;
+
+        public static IProgress<long>? Of(IProgress<string>? report, ReleaseAsset asset) =>
+            report == null || asset.Size <= 0 ? null : new Percent(report, asset);
+
+        public void Report(long value)
+        {
+            int percent = (int)Math.Min(100, value * 100 / asset.Size);
+            if (Interlocked.Exchange(ref last, percent) != percent)
+            {
+                report.Report($"Downloading {asset.Name} ({percent}%)");
+            }
+        }
     }
 
     // The defaults of the version installed now: its own sample_config.toml, else sample.toml at its tag.

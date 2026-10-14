@@ -98,6 +98,22 @@ public sealed record ModSettings(string Path, string? GameServerUrl, string? Pro
 public sealed record ModFiles(ModLayout Layout, IReadOnlyList<string> Plugins, Version? Version, ModSettings? Settings,
     IReadOnlyList<string> OldLayoutFiles, IReadOnlyList<string> Backups, IReadOnlyList<string> Files);
 
+/// <summary>How the buddy knows which channel an install is.</summary>
+public enum ChannelSource
+{
+    /// <summary>The buddy installed it, and wrote the channel down (<see cref="InstallRecord"/>).</summary>
+    Install,
+
+    /// <summary>The person said so.</summary>
+    Person,
+
+    /// <summary>A guess from the server address in its settings: the testing releases' settings use port 8420.</summary>
+    Server,
+}
+
+/// <summary>Which channel the installed OpenVersus is, and how the buddy knows.</summary>
+public sealed record ModChannel(Catalog.Channel Channel, ChannelSource Source);
+
 /// <summary>What is installed for one copy of the game, read from disk.</summary>
 public sealed record InstallState
 {
@@ -151,6 +167,12 @@ public sealed record InstallState
     /// </summary>
     public bool NeedsFirstLaunch { get; init; }
 
+    /// <summary>What the buddy wrote down when it installed the mod here; null when it did not, or the mod is not here.</summary>
+    public InstallRecord? Record { get; init; }
+
+    /// <summary>Which channel the installed mod is; null when the mod is not installed.</summary>
+    public ModChannel? Channel { get; init; }
+
     /// <summary>Things worth telling the person, in plain sentences; empty when nothing stands out.</summary>
     public required IReadOnlyList<string> Notes { get; init; }
 
@@ -162,7 +184,7 @@ public sealed record InstallState
             bool loader = Loaders.Any(l => l.IsUltimateAsiLoader);
             if (Mod.Layout == ModLayout.None)
             {
-                return Held.Any(h => h.IsRecorded && h.Name == Changes.InstallChanges.OpenVersusSet) ? InstallStatus.Disabled
+                return Held.Any(h => h.IsRecorded && Changes.InstallChanges.IsOpenVersusSet(h.Name)) ? InstallStatus.Disabled
                     : loader ? InstallStatus.LoaderOnly : InstallStatus.NotInstalled;
             }
             return loader ? InstallStatus.Installed : InstallStatus.LoaderMissing;
