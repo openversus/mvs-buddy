@@ -241,7 +241,7 @@ public sealed class GameStates
 
         return new PreparedChange(summary, merge, refused, () => Change(state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
             $"OpenVersus {version} ({release.Channel})", refused, staged,
-            (store, now, before) => store.Edit(null, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes))));
+            (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes))));
     }
 
     /// <summary>
@@ -351,19 +351,24 @@ public sealed class GameStates
         log.LogInformation("{Title}: done for {Folder}", title, copy.WorkTree);
     }
 
-    // What an install's state is: the release's mod folder and loader as the cache has them (modes kept), the merged
-    // settings, the target channel's own saved state, the record, and an old layout's settings and state where the mod
-    // takes them over from.
+    // An install's edits to the state before it. Only what OpenVersus owns is taken out: an older layout's files and every
+    // copy of Ultimate ASI Loader (the grafts replace the mod's folder and the license whole); anything else the state
+    // tracks stays, since a clean start's undo or put-back leaves other files tracked. Then the release's mod folder and
+    // loader as the cache has them (modes kept), the merged settings, the target channel's own saved state, the record,
+    // and an old layout's settings and state where the mod takes them over from.
     private List<TreeEdit> InstallEdits(GitStore store, CopyLayout copy, InstallState now, string before, string releaseTree, Channel channel,
         string loaderName, byte[]? settings, byte[] record)
     {
         string home = copy.Prefix + Home;
-        var edits = new List<TreeEdit>
+        var edits = new List<TreeEdit>();
+        edits.AddRange(now.Mod.Files.Concat(now.Mod.OldLayoutFiles).Concat(now.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.Path))
+            .Select(f => Relative(copy, f)).OfType<string>().Distinct(StringComparer.Ordinal).Select(f => new Removal(f)));
+        edits.AddRange(new TreeEdit[]
         {
             new Graft(home.TrimEnd('/'), releaseTree, Home.TrimEnd('/')),
             new Graft(copy.Prefix + loaderName, releaseTree, ReleaseCache.LoaderFolder + "/" + pin.DllName),
             new Graft(copy.Prefix + Installer.LicenseName, releaseTree, ReleaseCache.LoaderFolder + "/" + Installer.LicenseName),
-        };
+        });
         if (settings != null)
         {
             edits.Add(new Content(home + InstallReader.SettingsFile, settings));

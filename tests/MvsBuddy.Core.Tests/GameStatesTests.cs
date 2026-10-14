@@ -355,6 +355,22 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task An_install_leaves_alone_what_a_state_tracks_that_is_not_openversus()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        // Another mod's file the state tracks, as an undone clean start leaves it.
+        string other = tree.File("another mod", [.. Rel(Root), "MultiVersus", "Content", "Paks", "~mods", "Other_P.pak"]);
+        States(buddy).Snapshot(["MultiVersus/Content/Paks/~mods/Other_P.pak"], "tracked");
+
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+
+        Assert.Equal("another mod", Read(other));
+        Assert.Contains("MultiVersus/Content/Paks/~mods/Other_P.pak", States(buddy).Paths(States(buddy).TreeOf(States(buddy).Tip("current")!)));
+        Assert.False(File.Exists(Path.Combine(Home, "OpenVersus_2026.10.12.1.asi")), "what OpenVersus owns still goes");
+    }
+
+    [Fact]
     public async Task Installing_the_same_release_again_puts_back_what_was_deleted_since()
     {
         Game();
