@@ -64,23 +64,7 @@ public sealed class ChangePlan
     /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
     public void Apply()
     {
-        if (host.IsGameRunning())
-        {
-            throw Refuse("MultiVersus is running. Close it, then try again.");
-        }
-        foreach (var refusal in refusals)
-        {
-            if (refusal() is string reason)
-            {
-                throw Refuse(reason);
-            }
-        }
-        if (DeniedFolders() is { Count: > 0 } denied)
-        {
-            string reason = $"This account is not allowed to change files in {string.Join(", ", denied)}, so nothing was changed.";
-            log.LogInformation("Refused: {Reason}", reason);
-            throw new ChangeException(reason, denied);
-        }
+        Check();
         var done = new Stack<Step>();
         foreach (var step in steps)
         {
@@ -134,7 +118,36 @@ public sealed class ChangePlan
         }
     }
 
+    /// <summary>
+    /// What <see cref="Apply"/> checks before it changes anything: the game is not running, no condition of the plan fails,
+    /// and this account may change every folder. For a change made of this plan and more, checked before the rest.
+    /// </summary>
+    /// <exception cref="ChangeException">Refused; the message says why.</exception>
+    internal void Check()
+    {
+        if (host.IsGameRunning())
+        {
+            throw Refuse("MultiVersus is running. Close it, then try again.");
+        }
+        foreach (var refusal in refusals)
+        {
+            if (refusal() is string reason)
+            {
+                throw Refuse(reason);
+            }
+        }
+        if (DeniedFolders() is { Count: > 0 } denied)
+        {
+            string reason = $"This account is not allowed to change files in {string.Join(", ", denied)}, so nothing was changed.";
+            log.LogInformation("Refused: {Reason}", reason);
+            throw new ChangeException(reason, denied);
+        }
+    }
+
     internal void Refuse(Func<string?> reason) => refusals.Add(reason);
+
+    /// <summary>Counts <paramref name="folder"/> among the folders the change writes, for <see cref="DeniedFolders"/>, when something else writes it.</summary>
+    internal void Writes(string folder) => folders.Add(folder);
 
     /// <summary>Moves a file, which must not be at <paramref name="to"/> already; undone by moving it back.</summary>
     internal void Move(string from, string to)

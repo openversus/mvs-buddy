@@ -35,7 +35,7 @@ OwnedElement.Leaked = address => log.LogWarning("An element made in code was nev
 try
 {
     using var buddy = new BuddyBuilder().Logging(loggerFactory).Build();
-    var builder = new RmlWindowBuilder("MVS Buddy", 780, 560)
+    var builder = new RmlWindowBuilder("MVS Buddy", 1024, 768)
         .Resizable()
         .Assets(typeof(MainScreen).Assembly)
         .AddFont("fonts/LatoLatin-Regular.ttf", "Lato")

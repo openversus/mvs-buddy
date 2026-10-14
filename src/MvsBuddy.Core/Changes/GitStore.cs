@@ -11,6 +11,18 @@ internal enum PathChange
     Modified,
 }
 
+/// <summary>One change to a tree, for <see cref="GitStore.Edit"/>; paths relative, '/'-separated.</summary>
+internal abstract record TreeEdit(string Path);
+
+/// <summary><see cref="TreeEdit.Path"/> becomes what <paramref name="FromPath"/> is in <paramref name="FromTree"/>, a file or a folder, modes and all.</summary>
+internal sealed record Graft(string Path, string FromTree, string FromPath) : TreeEdit(Path);
+
+/// <summary><see cref="TreeEdit.Path"/> becomes an ordinary file holding <paramref name="Bytes"/>.</summary>
+internal sealed record Content(string Path, byte[] Bytes) : TreeEdit(Path);
+
+/// <summary><see cref="TreeEdit.Path"/>, a file or a folder, is taken out.</summary>
+internal sealed record Removal(string Path) : TreeEdit(Path);
+
 /// <summary>
 /// A bare git repository in the buddy's folder, with a folder as its working tree or none (a cache). It knows paths,
 /// trees, branches and tags, not the game: which paths make up a state is the caller's. Each operation opens the
@@ -42,10 +54,12 @@ internal sealed class GitStore
 
     /// <summary>
     /// Opens the repository at <paramref name="gitDir"/>, making it first when there is none, with
-    /// <paramref name="workTree"/> as its working tree (null for none). <paramref name="excludes"/> are gitignore lines
-    /// for paths under the working tree that are never part of a state.
+    /// <paramref name="workTree"/> as its working tree (null for none: a cache, or a look at a store's branches only).
+    /// <paramref name="excludes"/> are gitignore lines for paths under the working tree that are never part of a state;
+    /// written only with a working tree. With <paramref name="borrowFrom"/> (another store), objects that store has are
+    /// read from it and never written again here; that store's <see cref="Prune"/> then has to be told about this one.
     /// </summary>
-    internal static GitStore Open(string gitDir, string? workTree, IEnumerable<string> excludes, ILogger log)
+    internal static GitStore Open(string gitDir, string? workTree, IEnumerable<string> excludes, ILogger log, GitStore? borrowFrom = null)
     {
         IsolateConfiguration();
         gitDir = Path.GetFullPath(gitDir);
@@ -61,7 +75,17 @@ internal sealed class GitStore
             repo.Config.Set("core.longpaths", true);
             repo.Config.Set("core.logAllRefUpdates", false);
         }
-        File.WriteAllLines(Path.Combine(gitDir, "info", "exclude"), excludes);
+        if (workTree != null)
+        {
+            File.WriteAllLines(Path.Combine(gitDir, "info", "exclude"), excludes);
+        }
+        if (borrowFrom != null)
+        {
+            // Relative, so the buddy's folder can move as a whole; libgit2 reads it from the objects folder.
+            string alternates = Path.Combine(gitDir, "objects", "info", "alternates");
+            Directory.CreateDirectory(Path.GetDirectoryName(alternates)!);
+            File.WriteAllText(alternates, RelativeFolder(Path.Combine(gitDir, "objects"), Path.Combine(borrowFrom.gitDir, "objects")) + "\n");
+        }
         // Ahead of any .gitattributes a mod leaves in the game's folder: bytes in, the same bytes out.
         File.WriteAllText(Path.Combine(gitDir, "info", "attributes"), "* -text -filter -ident -eol\n");
         return store;
@@ -102,7 +126,9 @@ internal sealed class GitStore
 
     /// <summary>
     /// Records the working tree under <paramref name="roots"/> (files or folders, relative, '/'-separated) as a new commit
-    /// on HEAD's branch: files added, changed or gone since its last commit, not only the ones it knew. Returns the commit.
+    /// on HEAD's branch: files added, changed or gone since its last commit, not only the ones it knew. Every path the
+    /// last state had is recorded as it is now too, under a root or not, so a path stops being tracked only by being gone.
+    /// Returns the commit.
     /// </summary>
     internal string Snapshot(IEnumerable<string> roots, string message)
     {
@@ -120,9 +146,9 @@ internal sealed class GitStore
             {
                 paths.UnionWith(Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories).Select(f => Relative(tree, f)));
             }
-            // What the last snapshot had under the root and is gone now: staging it records the removal.
-            paths.UnionWith(repo.Index.Select(e => e.Path).Where(p => p == root || p.StartsWith(root + "/", StringComparison.Ordinal)));
         }
+        // What the last state had: staging a path that is gone records the removal.
+        paths.UnionWith(repo.Index.Select(e => e.Path));
         if (paths.Count > 0)
         {
             Commands.Stage(repo, paths);
@@ -174,6 +200,55 @@ internal sealed class GitStore
             definition.Add(path, repo.ObjectDatabase.CreateBlob(Path.GetFullPath(source)), Mode.NonExecutableFile);
         }
         return repo.ObjectDatabase.CreateTree(definition).Sha;
+    }
+
+    /// <summary>
+    /// <paramref name="baseTree"/> (or nothing) with <paramref name="edits"/> made in order. Returns the tree. A graft
+    /// from a tree this store borrows reads it from there.
+    /// </summary>
+    /// <exception cref="ChangeException">A graft's source is not in its tree.</exception>
+    internal string Edit(string? baseTree, IEnumerable<TreeEdit> edits)
+    {
+        using var repo = Repo();
+        var definition = baseTree == null ? new TreeDefinition() : TreeDefinition.From(repo.Lookup<Tree>(baseTree));
+        foreach (var edit in edits)
+        {
+            switch (edit)
+            {
+                case Graft graft:
+                    var entry = repo.Lookup<Tree>(graft.FromTree)[graft.FromPath]
+                        ?? throw new ChangeException($"{graft.FromPath} is not in {Short(graft.FromTree)}.");
+                    definition.Remove(graft.Path);
+                    definition.Add(graft.Path, entry);
+                    break;
+                case Content content:
+                    using (var bytes = new MemoryStream(content.Bytes, writable: false))
+                    {
+                        definition.Remove(content.Path);
+                        definition.Add(content.Path, repo.ObjectDatabase.CreateBlob(bytes), Mode.NonExecutableFile);
+                    }
+                    break;
+                case Removal removal:
+                    definition.Remove(removal.Path);
+                    break;
+            }
+        }
+        return repo.ObjectDatabase.CreateTree(definition).Sha;
+    }
+
+    /// <summary>Whether <paramref name="tree"/> has a file or folder at <paramref name="path"/>.</summary>
+    internal bool Has(string tree, string path)
+    {
+        using var repo = Repo();
+        return repo.Lookup<Tree>(tree)[path] != null;
+    }
+
+    /// <summary>The message <paramref name="commit"/> was made with, and when.</summary>
+    internal (string Message, DateTimeOffset At) Describe(string commit)
+    {
+        using var repo = Repo();
+        var found = repo.Lookup<Commit>(commit);
+        return (found.Message, found.Committer.When);
     }
 
     /// <summary>
@@ -354,14 +429,16 @@ internal sealed class GitStore
     }
 
     /// <summary>
-    /// Deletes every object no branch or tag reaches any more. Loose objects only: nothing here ever packs. Returns how many
-    /// objects went and their size on disk.
+    /// Deletes every object no branch or tag reaches any more, of this store or of <paramref name="borrowers"/> (the stores
+    /// that borrow this one's objects). Loose objects only: nothing here ever packs. Returns how many objects went and
+    /// their size on disk.
     /// </summary>
-    internal (int Objects, long Bytes) Prune()
+    internal (int Objects, long Bytes) Prune(IEnumerable<GitStore>? borrowers = null)
     {
         var reachable = new HashSet<ObjectId>();
-        using (var repo = Repo())
+        foreach (var store in (borrowers ?? []).Prepend(this))
         {
+            using var repo = store.Repo();
             foreach (var reference in repo.Refs)
             {
                 if (reference.ResolveToDirectReference()?.Target is GitObject target)
@@ -430,4 +507,23 @@ internal sealed class GitStore
         file.Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace(Path.DirectorySeparatorChar, '/');
 
     private static string Short(string sha) => sha.Substring(0, 8);
+
+    // The path from one folder to another, as "../.."-steps and names ('/'-separated); the full path when they share no root.
+    internal static string RelativeFolder(string from, string to)
+    {
+        var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        char[] separators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
+        string[] a = Path.GetFullPath(from).TrimEnd(separators).Split(separators);
+        string[] b = Path.GetFullPath(to).TrimEnd(separators).Split(separators);
+        int common = 0;
+        while (common < a.Length && common < b.Length && string.Equals(a[common], b[common], comparison))
+        {
+            common++;
+        }
+        if (common == 0)
+        {
+            return Path.GetFullPath(to);
+        }
+        return string.Join("/", Enumerable.Repeat("..", a.Length - common).Concat(b.Skip(common)));
+    }
 }

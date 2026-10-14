@@ -16,6 +16,7 @@ namespace MvsBuddy.App;
 /// </summary>
 internal sealed class MainScreen
 {
+    private readonly RmlWindow window;
     private readonly UiThread ui;
     private readonly Buddy buddy;
     private readonly ILogger log;
@@ -31,6 +32,7 @@ internal sealed class MainScreen
     private bool otherVersions;
     private bool onGame;
     private string? cleanStartUnavailable;
+    private bool picking;
     private readonly HashSet<ChangePlan> logged = [];
 
     // Steps a confirm screen lists before pointing at the log for the rest: a clean start can move tens of thousands.
@@ -38,6 +40,7 @@ internal sealed class MainScreen
 
     public MainScreen(RmlWindow window, UiThread ui, Buddy buddy, string version, ILogger log)
     {
+        this.window = window;
         this.ui = ui;
         this.buddy = buddy;
         this.log = log;
@@ -133,7 +136,7 @@ internal sealed class MainScreen
             {
                 var chosen = copy;
                 rml.Append($"<div class=\"card\"><p class=\"strong\">{Html.Text(StoreName(copy))}</p><p class=\"path\">{Html.Text(GameFolder(copy))}</p>")
-                    .Append(Button("Use this one", () => Select(chosen))).Append("</div>");
+                    .Append(Button("Use this one", () => Select(chosen), "primary")).Append("</div>");
             }
         }
         rml.Append("<div class=\"actions\">");
@@ -147,12 +150,12 @@ internal sealed class MainScreen
         }
         else
         {
-            rml.Append(Button("Search all drives", Search, "primary"));
+            rml.Append(Button("Search all drives", Search));
         }
         rml.Append("</div>");
-        rml.Append("<h3>Or type the folder the game is in</h3>");
+        rml.Append("<h3>Or pick the folder the game is in</h3>");
         rml.Append("<div class=\"row\"><input type=\"text\" id=\"folder\" size=\"40\" value=\"\"/>")
-            .Append(Button("Use this folder", ChooseTyped)).Append("</div>");
+            .Append(Button("Browse...", Browse)).Append(Button("Use this folder", ChooseTyped, "primary")).Append("</div>");
         Show(rml.ToString());
     }
 
@@ -194,13 +197,45 @@ internal sealed class MainScreen
         });
     }
 
+    private string TypedFolder() => ElementFormControlInput.From(document.GetElementById("folder")).GetValue().Trim().Trim('"');
+
     private void ChooseTyped()
     {
-        string typed = ElementFormControlInput.From(document.GetElementById("folder")).GetValue().Trim().Trim('"');
-        if (typed.Length == 0)
+        string typed = TypedFolder();
+        if (typed.Length > 0)
+        {
+            ChooseFolder(typed);
+        }
+    }
+
+    // The system's folder picker, starting in the typed folder when there is one; a folder picked is used as if typed.
+    private void Browse()
+    {
+        if (picking)
         {
             return;
         }
+        string typed = TypedFolder();
+        var answer = window.ChooseFolderAsync(typed.Length > 0 && Directory.Exists(typed) ? typed : null);
+        picking = true;
+        ui.Run(() => answer, folder =>
+        {
+            picking = false;
+            if (folder != null)
+            {
+                ChooseFolder(folder);
+            }
+        }, e =>
+        {
+            picking = false;
+            log.LogWarning(e, "No folder picker");
+            message = ($"{e.Message.TrimEnd('.')}. Type the folder instead.", true);
+            ShowGames();
+        });
+    }
+
+    private void ChooseFolder(string typed)
+    {
         var chosen = buddy.Games.Choose(typed);
         if (chosen.Verified)
         {

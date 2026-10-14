@@ -11,8 +11,9 @@ public sealed class Buddy : IDisposable
 {
     private readonly HttpClient? ownedHttp;
 
-    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, InstallChanges changes, Downloads downloads, Installer installer, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, HttpClient? ownedHttp)
+    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, InstallChanges changes, Downloads downloads, Installer installer, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, HttpClient? ownedHttp)
     {
+        States = states;
         Cache = cache;
         Paks = paks;
         Permissions = permissions;
@@ -49,6 +50,9 @@ public sealed class Buddy : IDisposable
 
     /// <summary>Asking Windows to let this account change files in folders it is refused in.</summary>
     public Permissions Permissions { get; }
+
+    /// <summary>Installing a release, switching channels and undoing, as states of each copy kept in git.</summary>
+    public GameStates States { get; }
 
     /// <summary>The releases fetched so far, kept in a git repository of the buddy's own.</summary>
     internal ReleaseCache Cache { get; }

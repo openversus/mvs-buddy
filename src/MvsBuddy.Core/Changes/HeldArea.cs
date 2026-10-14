@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MvsBuddy.Games;
@@ -85,14 +83,7 @@ internal sealed class HeldArea(HostSystem host)
         {
             return null;
         }
-        string path = Path.GetFullPath(game.Win64Directory).TrimEnd(Path.DirectorySeparatorChar);
-        if (host.IsWindows)
-        {
-            path = path.ToLowerInvariant();
-        }
-        using var sha = SHA256.Create();
-        string key = string.Concat(sha.ComputeHash(Encoding.UTF8.GetBytes(path)).Take(8).Select(b => b.ToString("x2")));
-        return Path.Combine(host.DataDirectory, "held", key);
+        return Path.Combine(host.DataDirectory, "held", GameStates.CopyKey(game.Win64Directory, host.IsWindows));
     }
 
     /// <summary>A set's folder: its name with anything a file system dislikes replaced.</summary>

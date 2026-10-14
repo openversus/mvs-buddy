@@ -12,7 +12,11 @@ namespace MvsBuddy.Changes;
 /// <param name="Tree">Its tree: <c>release.json</c>, <c>plugins/OpenVersus/**</c> as the zip ships it, and <c>loader/</c>
 /// (Ultimate ASI Loader as pinned, and its license).</param>
 /// <param name="Downloaded">Whether it was downloaded just now; false when the cache already had it.</param>
-public sealed record CachedRelease(string Tag, string Commit, string Tree, bool Downloaded);
+public sealed record CachedRelease(string Tag, string Commit, string Tree, bool Downloaded)
+{
+    /// <summary>Whether the zip was checked against a checksum (GitHub's, or one the release publishes).</summary>
+    public bool ZipChecked { get; init; } = true;
+}
 
 /// <summary>
 /// The releases the buddy has fetched, in a bare git repository of its own (<c>cache.git</c> in its folder), one for
@@ -38,7 +42,21 @@ internal sealed class ReleaseCache
         this.log = log;
     }
 
+    // Never Prune() this store directly: the copies' states read release files from it, and only Prune() below counts them.
     internal GitStore Store() => GitStore.Open(Path.Combine(DataDirectory(), "cache.git"), null, [], log);
+
+    /// <summary>
+    /// Deletes what no tag or branch of the cache reaches, nor any state of a copy of the game (<see cref="GameStates"/>
+    /// keeps its states' release files in the cache, not beside them). Returns how many objects went and their size.
+    /// </summary>
+    internal (int Objects, long Bytes) Prune()
+    {
+        string states = Path.Combine(DataDirectory(), GameStates.StatesFolder);
+        var borrowers = Directory.Exists(states)
+            ? Directory.EnumerateDirectories(states, "*.git").Where(d => LibGit2Sharp.Repository.IsValid(d)).Select(d => GitStore.Open(d, null, [], log)).ToList()
+            : [];
+        return Store().Prune(borrowers);
+    }
 
     /// <summary>The channel's branch in the cache.</summary>
     internal static string BranchOf(Channel channel) => channel == Channel.Prod ? "prod" : "testing";
@@ -97,7 +115,7 @@ internal sealed class ReleaseCache
             string commit = store.Commit(BranchOf(release.Channel), tree, release.Tag);
             store.Tag(release.Tag, commit);
             log.LogInformation("{Tag} cached as {Commit}", release.Tag, commit.Substring(0, 8));
-            return new CachedRelease(release.Tag, commit, tree, true);
+            return new CachedRelease(release.Tag, commit, tree, true) { ZipChecked = zipAsset.Sha256 != null };
         }
         finally
         {
