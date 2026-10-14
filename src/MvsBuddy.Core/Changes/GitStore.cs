@@ -21,7 +21,8 @@ internal enum PathChange
 /// read (theirs can say core.autocrlf=true, which rewrote text files on checkout), and no .gitattributes in a working
 /// tree can turn on line-ending or filter rules either; core.longpaths (libgit2 on Windows refuses paths past 260
 /// characters otherwise); no reflogs (they would keep dropped objects alive). Objects stay loose and are never packed, so
-/// <see cref="Prune"/> can delete the ones nothing reaches. File modes are kept: the mod ships a Linux executable.
+/// <see cref="Prune"/> can delete the ones nothing reaches. Every commit stands alone, without a parent: a branch or tag is
+/// one state, not a history, so dropping it frees what only it held. File modes are kept: the mod ships a Linux executable.
 /// </remarks>
 internal sealed class GitStore
 {
@@ -75,8 +76,8 @@ internal sealed class GitStore
         }
     }
 
-    private Repository Repo() => new(gitDir, workTree == null ? null
-        : new RepositoryOptions { WorkingDirectoryPath = workTree, IndexPath = Path.Combine(gitDir, "index") });
+    private Repository Repo() => workTree == null ? new(gitDir)
+        : new(gitDir, new RepositoryOptions { WorkingDirectoryPath = workTree, IndexPath = Path.Combine(gitDir, "index") });
 
     /// <summary>The commit <paramref name="branch"/> points at; null when there is no such branch.</summary>
     internal string? Tip(string branch)
@@ -176,8 +177,7 @@ internal sealed class GitStore
     }
 
     /// <summary>
-    /// A new commit of <paramref name="tree"/> on <paramref name="branch"/>, after its tip when it has one; the branch is
-    /// made when it does not exist. Returns the commit. Not HEAD's branch while there is a working tree: that one moves
+    /// A new commit of <paramref name="tree"/> on <paramref name="branch"/>, which is made or moved to it. Returns the commit. Not HEAD's branch while there is a working tree: that one moves
     /// only with <see cref="Switch"/>, after the working tree has.
     /// </summary>
     internal string Commit(string branch, string tree, string message)
@@ -192,16 +192,15 @@ internal sealed class GitStore
 
     private static string CommitOn(Repository repo, string branchRef, Tree tree, string message)
     {
-        var parent = repo.Refs[branchRef]?.ResolveToDirectReference()?.Target as Commit;
-        var commit = NewCommit(repo, tree, message, parent);
+        var commit = NewCommit(repo, tree, message);
         repo.Refs.Add(branchRef, commit.Id, allowOverwrite: true);
         return commit.Sha;
     }
 
-    private static Commit NewCommit(Repository repo, Tree tree, string message, Commit? parent)
+    private static Commit NewCommit(Repository repo, Tree tree, string message)
     {
         var signature = new Signature("MVS Buddy", "buddy@localhost", DateTimeOffset.Now);
-        return repo.ObjectDatabase.CreateCommit(signature, signature, message, tree, parent == null ? [] : [parent], false);
+        return repo.ObjectDatabase.CreateCommit(signature, signature, message, tree, [], false);
     }
 
     /// <summary>Points <paramref name="branch"/> at <paramref name="commit"/>, made or moved.</summary>
@@ -266,6 +265,20 @@ internal sealed class GitStore
         return Files(repo.Lookup<Tree>(tree)).Select(e => e.Path).ToList();
     }
 
+    /// <summary>The bytes of the file at <paramref name="path"/> in <paramref name="tree"/>; null when the tree has none. For small files.</summary>
+    internal byte[]? Read(string tree, string path)
+    {
+        using var repo = Repo();
+        if (repo.Lookup<Tree>(tree)[path]?.Target is not Blob blob)
+        {
+            return null;
+        }
+        using var source = blob.GetContentStream();
+        using var bytes = new MemoryStream();
+        source.CopyTo(bytes);
+        return bytes.ToArray();
+    }
+
     /// <summary>Copies the file at <paramref name="path"/> in <paramref name="tree"/> to <paramref name="to"/>; false when the tree has none.</summary>
     internal bool CopyOut(string tree, string path, string to)
     {
@@ -305,7 +318,7 @@ internal sealed class GitStore
         var root = RequireWorkTree();
         using var repo = Repo();
         var head = repo.Head.Tip ?? throw new ChangeException($"{repo.Head.FriendlyName} has no snapshot to switch from yet.");
-        var target = NewCommit(repo, repo.Lookup<Tree>(tree), message, head);
+        var target = NewCommit(repo, repo.Lookup<Tree>(tree), message);
         try
         {
             // HEAD still on the snapshot: it is the baseline that tells libgit2 which files are ours to remove.

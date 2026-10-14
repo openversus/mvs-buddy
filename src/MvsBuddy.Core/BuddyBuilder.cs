@@ -92,6 +92,8 @@ public sealed class BuddyBuilder
         var installer = new Installer(system, releases, downloads, changes, loaderPin, loggerFactory.CreateLogger<Installer>());
         var stock = new StockCheck(system, loggerFactory.CreateLogger<StockCheck>());
         var permissions = new Permissions(system, loggerFactory.CreateLogger<Permissions>());
-        return new Buddy(releases, games, installs, changes, downloads, installer, stock, permissions, ownsHttp ? client : null);
+        var cache = new ReleaseCache(system, downloads, loaderPin, loggerFactory.CreateLogger<ReleaseCache>());
+        var pakStore = new PakStore(system, downloads, loggerFactory.CreateLogger<PakStore>());
+        return new Buddy(releases, games, installs, changes, downloads, installer, stock, permissions, cache, pakStore, ownsHttp ? client : null);
     }
 }

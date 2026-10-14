@@ -69,4 +69,20 @@ public sealed class DownloadsTests : IDisposable
         Assert.Contains(Path.Combine("downloads", "unchecked"), path);
         Assert.Equal(2, server.Requests.Count);
     }
+
+    [Theory]
+    [InlineData("{0} *OpenVersus_x.zip", "OpenVersus_x.zip", true)]
+    [InlineData("{0}  OpenVersus_x.zip\r\n", "OpenVersus_x.zip", true)]
+    [InlineData("{1} *OpenVersus_x.asi\n{0} *OpenVersus_x.zip\n", "OpenVersus_x.zip", true)]
+    [InlineData("{0} *OpenVersus_x.zip.old", "OpenVersus_x.zip", false)]
+    [InlineData("{0}x *OpenVersus_x.zip", "OpenVersus_x.zip", false)]
+    [InlineData("not a checksum at all", "OpenVersus_x.zip", false)]
+    public void A_checksum_file_as_sha256sum_writes_it_gives_the_named_files_hash(string format, string name, bool found)
+    {
+        string mine = new('a', 64), other = new('b', 64);
+
+        string? sha = Downloads.ChecksumIn(string.Format(format, mine.ToUpperInvariant(), other), name);
+
+        Assert.Equal(found ? mine : null, sha);
+    }
 }

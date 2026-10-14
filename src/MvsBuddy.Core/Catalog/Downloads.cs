@@ -67,6 +67,61 @@ public sealed class Downloads
         return DownloadAsync(url, name, Path.GetDirectoryName(path)!, sha256, progress, cancellationToken);
     }
 
+    /// <summary>
+    /// <paramref name="asset"/> with its checksum read from the checksum file published beside it, when GitHub gives none
+    /// (<see cref="ReleaseAsset.ChecksumUrl"/>, as sha256sum writes them); as it is when that file is missing, unreadable or
+    /// does not name it, and then it is downloaded unchecked, as before.
+    /// </summary>
+    public async Task<ReleaseAsset> WithChecksumAsync(ReleaseAsset asset, CancellationToken cancellationToken = default)
+    {
+        if (asset == null)
+        {
+            throw new ArgumentNullException(nameof(asset));
+        }
+        if (asset.Sha256 != null || asset.ChecksumUrl == null)
+        {
+            return asset;
+        }
+        try
+        {
+            using var response = await http.GetAsync(asset.ChecksumUrl, cancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            string? sha = ChecksumIn(await response.Content.ReadAsStringAsync().ConfigureAwait(false), asset.Name);
+            if (sha != null)
+            {
+                log.LogInformation("{Name}: checksum from {Url}", asset.Name, asset.ChecksumUrl);
+                return asset with { Sha256 = sha };
+            }
+            log.LogWarning("{Url} does not name {Name}; it is downloaded unchecked", asset.ChecksumUrl, asset.Name);
+        }
+        catch (HttpRequestException e)
+        {
+            log.LogWarning(e, "Could not read {Url}; {Name} is downloaded unchecked", asset.ChecksumUrl, asset.Name);
+        }
+        return asset;
+    }
+
+    /// <summary>The checksum <paramref name="text"/> (sha256sum's "hash  name" or "hash *name" lines) gives for <paramref name="name"/>.</summary>
+    internal static string? ChecksumIn(string text, string name)
+    {
+        foreach (string raw in text.Split('\n'))
+        {
+            string line = raw.Trim();
+            int space = line.IndexOf(' ');
+            if (space != 64)
+            {
+                continue;
+            }
+            string hash = line.Substring(0, 64);
+            string file = line.Substring(space).TrimStart(' ').TrimStart('*');
+            if (file == name && hash.All(Uri.IsHexDigit))
+            {
+                return hash.ToLowerInvariant();
+            }
+        }
+        return null;
+    }
+
     private string DataDirectory() => string.IsNullOrEmpty(host.DataDirectory)
         ? throw new DownloadException("The buddy has no folder of its own to download into.")
         : host.DataDirectory;

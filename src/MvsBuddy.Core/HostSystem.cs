@@ -228,6 +228,78 @@ internal sealed class HostSystem
         return new[] { home, "/run/media", "/media", "/mnt" }.Where(Directory.Exists).ToList();
     }
 
+    /// <summary>
+    /// <paramref name="path"/> with every link in it resolved: two paths to one folder give the same answer. The full path
+    /// as given when it cannot be resolved (it does not exist, or the system call is not there).
+    /// </summary>
+    internal string RealPath(string path)
+    {
+        string full = Path.GetFullPath(path);
+        try
+        {
+            if (IsWindows)
+            {
+                // No access asked for, all sharing, open an existing folder or file (backup semantics opens folders).
+                // It's a lot faster than the equivalent dotnet calls and allows to very very quickly walk the path if
+                // symlinks are involved.
+                IntPtr handle = CreateFile(full, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+                if (handle == new IntPtr(-1))
+                {
+                    return full;
+                }
+                try
+                {
+                    var buffer = new System.Text.StringBuilder(32768);
+                    uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                    if (length == 0 || length >= buffer.Capacity)
+                    {
+                        return full;
+                    }
+                    string final = buffer.ToString();
+                    return final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? @"\\" + final.Substring(8)
+                        : final.StartsWith(@"\\?\", StringComparison.Ordinal) ? final.Substring(4) : final;
+                }
+                finally
+                {
+                    CloseHandle(handle);
+                }
+            }
+            IntPtr resolved = RealPathOf(full, IntPtr.Zero);
+            if (resolved == IntPtr.Zero)
+            {
+                return full;
+            }
+            try
+            {
+                int length = 0;
+                while (Marshal.ReadByte(resolved, length) != 0)
+                {
+                    length++;
+                }
+                var bytes = new byte[length];
+                Marshal.Copy(resolved, bytes, 0, length);
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            finally
+            {
+                Free(resolved);
+            }
+        }
+        catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
+        {
+            return full;
+        }
+    }
+
+    [DllImport("kernel32", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetFinalPathNameByHandle(IntPtr handle, System.Text.StringBuilder path, uint size, uint flags);
+
+    [DllImport("libc", EntryPoint = "realpath", SetLastError = true)]
+    private static extern IntPtr RealPathOf(string path, IntPtr resolved);
+
+    [DllImport("libc", EntryPoint = "free")]
+    private static extern void Free(IntPtr pointer);
+
     [DllImport("kernel32", EntryPoint = "CreateFileW", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
 

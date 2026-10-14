@@ -95,15 +95,19 @@ public sealed class Installer
         {
             throw new ArgumentNullException(state == null ? nameof(state) : nameof(release));
         }
-        var zipAsset = release.InstallZip ?? throw new ChangeException($"{release.Tag} has no install zip.");
+        var zipAsset = await downloads.WithChecksumAsync(release.InstallZip ?? throw new ChangeException($"{release.Tag} has no install zip."),
+            cancellationToken).ConfigureAwait(false);
+        var used = new List<ReleaseAsset> { zipAsset };
         progress?.Report($"Downloading {zipAsset.Name}");
         string zip = await downloads.FetchAsync(zipAsset, Percent.Of(progress, zipAsset), cancellationToken).ConfigureAwait(false);
         string extracted = ExtractPluginFolder(zip);
 
         var paks = new List<(string, string?, string)>();
         var pakAssets = await catalog.PaksForAsync(release, cancellationToken).ConfigureAwait(false);
-        foreach (var asset in pakAssets)
+        foreach (var listed in pakAssets)
         {
+            var asset = await downloads.WithChecksumAsync(listed, cancellationToken).ConfigureAwait(false);
+            used.Add(asset);
             // Not downloaded when the installed copy is already this one: same size, then same checksum as GitHub's.
             string? installed = state.SavedPaksDirectory == null ? null : Path.Combine(state.SavedPaksDirectory, asset.Name);
             if (asset.Sha256 != null && installed != null && File.Exists(installed) && new FileInfo(installed).Length == asset.Size)
@@ -132,10 +136,10 @@ public sealed class Installer
             PakAssets = pakAssets,
         };
         var prepared = Plan(state, release, staged, options ?? new InstallOptions());
-        var notChecked = new[] { zipAsset }.Concat(release.Assets.Where(a => paks.Any(p => p.Item1 == a.Name))).Where(a => a.Sha256 == null).Select(a => a.Name).Distinct().ToList();
+        var notChecked = used.Where(a => a.Sha256 == null).Select(a => a.Name).Distinct().ToList();
         return notChecked.Count == 0 ? prepared
             : new PreparedInstall(release, prepared.Plan, prepared.Settings,
-                [.. prepared.Summary, $"Not checked, since GitHub gives no checksum for them: {string.Join(", ", notChecked)}."]);
+                [.. prepared.Summary, $"Not checked, since neither GitHub nor the release gives a checksum for them: {string.Join(", ", notChecked)}."]);
     }
 
     /// <summary>
@@ -376,10 +380,11 @@ public sealed class Installer
         return new PreparedInstall(release, plan, merge, summary);
     }
 
-    // The release's plugins/OpenVersus/ only, extracted afresh beside the zip; nothing else in it is ever used.
-    private static string ExtractPluginFolder(string zip)
+    // The release's plugins/OpenVersus/ only, extracted afresh into <paramref name="into"/> (beside the zip by default);
+    // nothing else in it is ever used.
+    internal static string ExtractPluginFolder(string zip, string? into = null)
     {
-        string extracted = Path.Combine(Path.GetDirectoryName(zip)!, "extracted");
+        string extracted = into ?? Path.Combine(Path.GetDirectoryName(zip)!, "extracted");
         if (Directory.Exists(extracted))
         {
             Directory.Delete(extracted, recursive: true);
@@ -405,9 +410,11 @@ public sealed class Installer
     }
 
     // The pinned DLL out of the loader's zip, checked on its own: the zip's checksum covers the archive, not this entry.
-    private string ExtractLoader(string zip)
+    private string ExtractLoader(string zip) => ExtractLoader(zip, pin, Path.Combine(Path.GetDirectoryName(zip)!, "loader"));
+
+    internal static string ExtractLoader(string zip, AsiLoaderPin pin, string folder)
     {
-        string target = Path.Combine(Path.GetDirectoryName(zip)!, "loader", pin.DllName);
+        string target = Path.Combine(folder, pin.DllName);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         if (File.Exists(target))
         {
@@ -428,7 +435,7 @@ public sealed class Installer
     }
 
     // A download's bytes as "Downloading X (42%)", once per percent, for a progress line a person can watch move.
-    private sealed class Percent(IProgress<string> report, ReleaseAsset asset) : IProgress<long>
+    internal sealed class Percent(IProgress<string> report, ReleaseAsset asset) : IProgress<long>
     {
         private int last = -1;
 

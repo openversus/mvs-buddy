@@ -7,7 +7,7 @@ namespace MvsBuddy.App;
 /// Clicks buttons by their labels, in order, each once the window has been quiet for a moment, through RmlUi's own input
 /// path (mouse move, press, release at the button's middle); after the last has settled, hands over to
 /// <paramref name="whenDone"/> (a screenshot) or closes the window. For checking the screens without a person:
-/// <c>--click="Turn OpenVersus off;Go ahead" --screenshot=after.ppm</c>.
+/// <c>--click="Turn OpenVersus off;Go ahead" --screenshot=after.ppm</c>. A label "#id=text" types text into that field.
 /// </summary>
 internal sealed class Autopilot(RmlWindow window, UiThread ui, IEnumerable<string> labels, Action? whenDone)
 {
@@ -36,6 +36,20 @@ internal sealed class Autopilot(RmlWindow window, UiThread ui, IEnumerable<strin
         }
         quietFrames = 0;
         string label = labels.Dequeue();
+        // "#id=text" types text into that field instead of clicking.
+        if (label.StartsWith("#", StringComparison.Ordinal) && label.IndexOf('=') is int equals and > 1)
+        {
+            var field = window.Context.GetDocument(0).GetElementById(label.Substring(1, equals - 1));
+            if (field.IsNull)
+            {
+                Console.Error.WriteLine($"autopilot: no field \"{label}\"");
+                window.RequestExit();
+                return;
+            }
+            ElementFormControlInput.From(field).SetValue(label.Substring(equals + 1));
+            Console.WriteLine($"autopilot: typed into {label.Substring(0, equals)}");
+            return;
+        }
         var button = window.Context.GetDocument(0).QuerySelectorAll("button").FirstOrDefault(b => b.GetInnerRML().Trim() == label);
         if (button.IsNull)
         {

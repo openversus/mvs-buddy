@@ -207,10 +207,42 @@ internal sealed class MainScreen
             Select(chosen);
             return;
         }
+        // Not the game itself: often a folder or two above it, such as the Steam library.
+        Show(Working("Looking inside that folder for MultiVersus..."));
+        ui.Run(() => Task.FromResult(buddy.Games.FindUnder(typed, ui.Closing)), inside =>
+        {
+            if (inside.Count > 0)
+            {
+                ShowFoundInside(chosen, inside);
+            }
+            else
+            {
+                AskAsChosen(chosen);
+            }
+        }, Failed);
+    }
+
+    private void ShowFoundInside(GameInstall chosen, IReadOnlyList<GameInstall> inside)
+    {
         actions.Clear();
-        Show($"<h2>Are you really sure?</h2><p>{Html.Text(chosen.UnverifiedReason)}</p><p class=\"path\">{Html.Text(chosen.Win64Directory)}</p>"
+        var rml = new StringBuilder("<h2>MultiVersus is inside the folder you chose</h2>")
+            .Append("<p>The folder you chose is not the game's own, but the game is in it. Use this instead?</p>");
+        foreach (var copy in inside)
+        {
+            var use = copy;
+            rml.Append($"<div class=\"card\"><p class=\"path\">{Html.Text(GameFolder(copy))}</p>").Append(Button("Use this one", () => Select(use), "primary")).Append("</div>");
+        }
+        rml.Append($"<div class=\"actions\">{Button("No", () => AskAsChosen(chosen))}</div>");
+        Show(rml.ToString());
+    }
+
+    // The folder as it was chosen; "No" ends here, since the person most likely picked the wrong folder.
+    private void AskAsChosen(GameInstall chosen)
+    {
+        actions.Clear();
+        Show($"<h2>Use the folder you chose?</h2><p>{Html.Text(chosen.UnverifiedReason)}</p><p class=\"path\">{Html.Text(chosen.Win64Directory)}</p>"
             + "<p>The buddy can use it anyway; it will install there and say what it could not check.</p>"
-            + $"<div class=\"actions\">{Button("Use it anyway", () => Select(chosen), "primary")}{Button("Back", () => ShowGames())}</div>");
+            + $"<div class=\"actions\">{Button("Yes, use it", () => Select(chosen), "primary")}{Button("No", () => ShowGames())}</div>");
     }
 
     // One copy of the game ---------------------------------------------------------------------------------------------

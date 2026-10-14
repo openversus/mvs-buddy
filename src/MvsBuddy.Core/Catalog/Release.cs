@@ -22,4 +22,11 @@ public sealed record Release(string Tag, string Name, Channel Channel, Version? 
 /// <param name="Size">Its size in bytes.</param>
 /// <param name="DownloadUrl">Where to download it.</param>
 /// <param name="Sha256">Its SHA-256 as GitHub computed it on upload, in lowercase hex; null when GitHub gave none.</param>
-public sealed record ReleaseAsset(string Name, long Size, Uri DownloadUrl, string? Sha256);
+public sealed record ReleaseAsset(string Name, long Size, Uri DownloadUrl, string? Sha256)
+{
+    /// <summary>
+    /// When GitHub gives no checksum: the checksum file published beside it in the same release (<c>name.sha256</c>, else
+    /// <c>SHA256SUMS</c>), which <see cref="Downloads.WithChecksumAsync"/> reads. Null when there is none, or no need.
+    /// </summary>
+    public Uri? ChecksumUrl { get; init; }
+}

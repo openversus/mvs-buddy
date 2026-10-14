@@ -122,6 +122,28 @@ public sealed class ReleaseCatalogTests
     }
 
     [Fact]
+    public async Task Without_githubs_digest_an_asset_points_at_its_own_sha256_else_at_SHA256SUMS()
+    {
+        var releases = JsonNode.Parse(Fixture("ovs-client-releases.json"))!.AsArray();
+        var assets = releases.Single(r => (string)r!["tag_name"]! == "2026.04.08.14")!["assets"]!.AsArray();
+        var zip = assets.Single(a => ((string)a!["name"]!).EndsWith(".zip", StringComparison.Ordinal))!;
+        string name = (string)zip["name"]!;
+        zip.AsObject().Remove("digest");
+        assets.Add(new JsonObject { ["name"] = name + ".sha256", ["size"] = 90, ["browser_download_url"] = "https://example.test/own.sha256" });
+        assets.Add(new JsonObject { ["name"] = "SHA256SUMS", ["size"] = 200, ["browser_download_url"] = "https://example.test/SHA256SUMS" });
+        assets.Add(new JsonObject { ["name"] = "OpenVersus_extra.asi", ["size"] = 5, ["browser_download_url"] = "https://example.test/extra.asi" });
+        var github = new FakeGitHub().Json(ClientPage1, releases.ToJsonString());
+
+        var release = (await Catalog(github).ListAsync(Channel.Prod)).Single(r => r.Tag == "2026.04.08.14");
+
+        Assert.Null(release.InstallZip!.Sha256);
+        Assert.Equal("https://example.test/own.sha256", release.InstallZip.ChecksumUrl!.ToString());
+        Assert.Equal("https://example.test/SHA256SUMS", release.Assets.Single(a => a.Name == "OpenVersus_extra.asi").ChecksumUrl!.ToString());
+        Assert.All((await Catalog(new FakeGitHub().Json(ClientPage1, Fixture("ovs-client-releases.json"))).ListAsync(Channel.Prod)).SelectMany(r => r.Assets),
+            a => Assert.True(a.Sha256 == null || a.ChecksumUrl == null));
+    }
+
+    [Fact]
     public async Task Testing_paks_are_the_current_paks_release()
     {
         string clients = Retag(Fixture("ovs-client-releases.json"), "OVS_Season_1", "2026.10.12.01-testing");

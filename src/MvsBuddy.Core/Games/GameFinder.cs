@@ -88,21 +88,44 @@ public sealed class GameFinder
         return Unlisted(folder, FoundBy.Chosen) with { Verified = false, UnverifiedReason = reason };
     }
 
-    internal IReadOnlyList<GameInstall> Search(IReadOnlyList<string> roots, IProgress<SearchProgress>? progress, CancellationToken cancellationToken)
+    /// <summary>
+    /// The game found inside a folder someone picked that is not the game itself (often a folder or two above it). It looks
+    /// for folders named MultiVersus, the name the game's own project folder always has, and checks each; one that is not the
+    /// game is walked past. Seven folders deep puts Win64 nine down (a Steam folder picked from the home folder); never more
+    /// than 250,000 folders, a few seconds.
+    /// </summary>
+    public IReadOnlyList<GameInstall> FindUnder(string folder, CancellationToken cancellationToken = default) =>
+        Directory.Exists(folder)
+            ? Search([Path.GetFullPath(folder)], null, cancellationToken, maxDepth: 7, maxFolders: 250_000,
+                recognise: f => string.Equals(Path.GetFileName(f), "MultiVersus", StringComparison.OrdinalIgnoreCase) ? GameFiles.Win64Under(f) : null)
+            : [];
+
+    // recognise: the game's Win64 folder for a folder that is (or holds) the game, else null; by default, the folder being Win64.
+    internal IReadOnlyList<GameInstall> Search(IReadOnlyList<string> roots, IProgress<SearchProgress>? progress, CancellationToken cancellationToken,
+        int maxDepth = int.MaxValue, int maxFolders = int.MaxValue, Func<string, string?>? recognise = null)
     {
+        recognise ??= f => GameFiles.IsGame(f) ? f : null;
         var found = new List<GameInstall>();
         // Breadth first: a game a few folders down is found before the search sinks into a deep tree beside it.
-        var pending = new Queue<string>(roots);
+        // Links are followed (~/.steam is links into the Steam folder); a folder reached twice, by a link or a loop, is
+        // searched once. Its real path is worked out only where a link can have changed it: the roots, and the links.
+        var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var visited = new HashSet<string>(comparer);
+        var pending = new Queue<(string Folder, string Real, int Depth)>(roots.Select(r => (r, host.RealPath(r), 0)));
         var clock = Stopwatch.StartNew();
         int searched = 0;
-        while (pending.Count > 0)
+        while (pending.Count > 0 && searched < maxFolders)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string folder = pending.Dequeue();
-            searched++;
-            if (GameFiles.IsGame(folder))
+            var (folder, real, depth) = pending.Dequeue();
+            if (!visited.Add(real))
             {
-                var install = Unlisted(Path.GetFullPath(folder), FoundBy.Search);
+                continue;
+            }
+            searched++;
+            if (recognise(folder) is string win64)
+            {
+                var install = Unlisted(Path.GetFullPath(win64), FoundBy.Search);
                 found.Add(install);
                 progress?.Report(new SearchProgress(folder, searched, install));
                 continue;
@@ -112,9 +135,13 @@ public sealed class GameFinder
                 progress.Report(new SearchProgress(folder, searched, null));
                 clock.Restart();
             }
-            foreach (string child in Children(folder))
+            if (depth >= maxDepth)
             {
-                pending.Enqueue(child);
+                continue;
+            }
+            foreach (var (child, isLink) in Children(folder))
+            {
+                pending.Enqueue((child, isLink ? host.RealPath(child) : Path.Combine(real, Path.GetFileName(child)), depth + 1));
             }
         }
         var installs = Distinct(found);
@@ -122,14 +149,13 @@ public sealed class GameFinder
         return installs;
     }
 
-    private static IEnumerable<string> Children(string folder)
+    private static IEnumerable<(string Folder, bool IsLink)> Children(string folder)
     {
         try
         {
             return new DirectoryInfo(folder).EnumerateDirectories()
-                // Links are not followed: they loop, and what they point at is searched where it lives.
-                .Where(d => (d.Attributes & FileAttributes.ReparsePoint) == 0 && !Skipped.Contains(d.Name))
-                .Select(d => d.FullName)
+                .Where(d => !Skipped.Contains(d.Name))
+                .Select(d => (d.FullName, (d.Attributes & FileAttributes.ReparsePoint) != 0))
                 .ToList();
         }
         catch (Exception e) when (e is UnauthorizedAccessException || e is IOException || e is System.Security.SecurityException)
@@ -142,6 +168,9 @@ public sealed class GameFinder
     // otherwise the store is unknown, and on Linux the prefix is the one it sits inside, if any.
     private GameInstall Unlisted(string win64, FoundBy foundBy)
     {
+        // By its real path: a copy reached through a link (~/.steam/steam) is the copy it points at, and the buddy keeps
+        // one set of everything per copy.
+        win64 = Directory.Exists(win64) ? host.RealPath(win64) : win64;
         string? library = SteamLibraryOf(win64);
         if (library != null)
         {
@@ -291,7 +320,8 @@ public sealed class GameFinder
     {
         var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var seen = new HashSet<string>(comparer);
-        return found.Where(i => seen.Add(Path.GetFullPath(i.Win64Directory).TrimEnd(Path.DirectorySeparatorChar))).ToList();
+        // By real path: the same copy reached through a link (~/.steam/steam, ~/.steam/root) is one copy.
+        return found.Where(i => seen.Add(host.RealPath(i.Win64Directory).TrimEnd(Path.DirectorySeparatorChar))).ToList();
     }
 
     private Vdf? Read(string path)

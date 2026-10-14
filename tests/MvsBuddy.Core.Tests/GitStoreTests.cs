@@ -240,11 +240,16 @@ public sealed class GitStoreTests : IDisposable
         store.DeleteBranch("cache");
         store.DeleteBranch("mvsi");
 
+        // A state replaced on its branch is freed too: commits do not chain.
+        string replaced = store.Commit("prod", store.Compose(null, [("prod/old.asi", tree.File("an old prod", "staging", "old.asi"))]), "old prod");
+        store.Commit("prod", store.Compose(null, [("prod/new.asi", tree.File("a new prod", "staging", "new.asi"))]), "new prod");
+
         var (objects, bytes) = store.Prune();
 
         Assert.True(objects >= 3 && bytes > 0, $"{objects} objects, {bytes} bytes"); // the commit, its trees, its blob
         using var repo = new Repository(GitDir);
         Assert.Null(repo.Lookup(dropped));
+        Assert.Null(repo.Lookup(replaced));
         Assert.NotNull(repo.Lookup(tagged));
         foreach (var path in store.Paths(store.TreeOf(installed)))
         {

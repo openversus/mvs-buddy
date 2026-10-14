@@ -114,13 +114,21 @@ public sealed class ReleaseCatalog
     private static bool IsPak(ReleaseAsset asset) =>
         PakExtensions.Any(extension => asset.Name.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
 
-    private static Release ToRelease(GitHubRelease release, Channel channel) => new(
-        release.TagName,
-        string.IsNullOrEmpty(release.Name) ? release.TagName : release.Name!,
-        channel,
-        ChannelRules.VersionOf(release.TagName),
-        release.PublishedAt,
-        release.Assets.Select(asset => new ReleaseAsset(asset.Name, asset.Size, new Uri(asset.BrowserDownloadUrl), Sha256Of(asset.Digest))).ToList());
+    private static Release ToRelease(GitHubRelease release, Channel channel)
+    {
+        // Where GitHub gives no checksum, the one published beside the file: its own .sha256, else SHA256SUMS.
+        var urls = release.Assets.GroupBy(a => a.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => new Uri(g.First().BrowserDownloadUrl), StringComparer.Ordinal);
+        Uri? ChecksumOf(string name) => urls.TryGetValue(name + ".sha256", out var own) ? own : urls.TryGetValue("SHA256SUMS", out var sums) ? sums : null;
+        return new(
+            release.TagName,
+            string.IsNullOrEmpty(release.Name) ? release.TagName : release.Name!,
+            channel,
+            ChannelRules.VersionOf(release.TagName),
+            release.PublishedAt,
+            release.Assets.Select(asset => Sha256Of(asset.Digest) is string sha
+                ? new ReleaseAsset(asset.Name, asset.Size, new Uri(asset.BrowserDownloadUrl), sha)
+                : new ReleaseAsset(asset.Name, asset.Size, new Uri(asset.BrowserDownloadUrl), null) { ChecksumUrl = ChecksumOf(asset.Name) }).ToList());
+    }
 
     private static string? Sha256Of(string? digest)
     {

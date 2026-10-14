@@ -245,4 +245,85 @@ public sealed class GameFinderTests : IDisposable
     {
         public void Report(T value) => report(value);
     }
+
+    [Fact]
+    public void A_folder_picked_too_high_has_the_game_found_inside_it()
+    {
+        // The library's root: the game six folders down, beside another game and a folder that only shares its name.
+        string win64 = tree.Game("libC", "steamapps", "common", "MultiVersus");
+        tree.File("not the game", "libC", "steamapps", "common", "Other", "Other.exe");
+        tree.File("someone's notes", "libC", "notes", "MultiVersus", "readme.txt");
+        var finder = Finder();
+
+        var picked = finder.Choose(tree.Path("libC"));
+        var inside = finder.FindUnder(tree.Path("libC"));
+
+        Assert.False(picked.Verified);
+        Assert.Equal([win64], inside.Select(i => i.Win64Directory));
+        Assert.True(inside[0].Verified);
+    }
+
+    [Fact]
+    public void A_folder_named_like_the_game_but_not_it_is_walked_past()
+    {
+        string win64 = tree.Game("pick", "MultiVersus", "backup", "Game");
+        var finder = Finder();
+
+        Assert.Equal([win64], finder.FindUnder(tree.Path("pick")).Select(i => i.Win64Directory));
+    }
+
+    [Fact]
+    public void The_look_inside_a_picked_folder_reaches_win64_nine_folders_down_and_no_further()
+    {
+        // An install folder of another name (Epic lets people choose it): only the project folder says MultiVersus.
+        string nine = tree.Game("near", "1", "2", "3", "4", "5", "Game");
+        tree.Game("far", "1", "2", "3", "4", "5", "6", "Game");
+        tree.File("x", "empty", "nothing.txt");
+        var finder = Finder();
+
+        Assert.Equal([nine], finder.FindUnder(tree.Path("near")).Select(i => i.Win64Directory));
+        Assert.Equal(9, Path.GetRelativePath(tree.Path("near"), nine).Split(Path.DirectorySeparatorChar).Length);
+        Assert.Empty(finder.FindUnder(tree.Path("far")));
+        Assert.Empty(finder.FindUnder(tree.Path("empty")));
+        Assert.Empty(finder.FindUnder(tree.Path("does-not-exist")));
+    }
+
+    [SkippableFact]
+    public void A_folder_of_links_like_dot_steam_finds_the_game_through_them_once()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "making links needs a privilege on Windows");
+        string win64 = tree.Game("share", "Steam", "steamapps", "common", "MultiVersus");
+        Directory.CreateDirectory(tree.Path("dotsteam"));
+        Directory.CreateSymbolicLink(tree.Path("dotsteam", "steam"), tree.Path("share", "Steam"));
+        Directory.CreateSymbolicLink(tree.Path("dotsteam", "root"), tree.Path("share", "Steam"));
+        var finder = Finder();
+
+        var inside = finder.FindUnder(tree.Path("dotsteam"));
+
+        Assert.Equal([win64], inside.Select(i => i.Win64Directory));
+        Assert.Equal(win64, finder.Choose(tree.Path("dotsteam", "steam", "steamapps", "common", "MultiVersus")).Win64Directory);
+    }
+
+    [SkippableFact]
+    public void A_link_back_to_a_folder_above_does_not_send_the_walk_round_forever()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "making links needs a privilege on Windows");
+        string win64 = tree.Game("loopy", "a", "steamapps", "common", "MultiVersus");
+        Directory.CreateSymbolicLink(tree.Path("loopy", "a", "up"), tree.Path("loopy"));
+        var finder = Finder();
+
+        Assert.Equal([win64], finder.FindUnder(tree.Path("loopy")).Select(i => i.Win64Directory));
+    }
+
+    [SkippableFact]
+    public void A_real_path_follows_every_link_on_the_way_not_just_the_last()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "making links needs a privilege on Windows");
+        string target = tree.File("x", "real", "folder", "file.txt");
+        Directory.CreateSymbolicLink(tree.Path("hop2"), tree.Path("real", "folder"));
+        Directory.CreateSymbolicLink(tree.Path("hop1"), tree.Path("hop2"));
+
+        Assert.Equal(target, new HostSystem().RealPath(tree.Path("hop1", "file.txt")));
+        Assert.Equal(tree.Path("nowhere", "x"), new HostSystem().RealPath(tree.Path("nowhere", "x")));
+    }
 }
