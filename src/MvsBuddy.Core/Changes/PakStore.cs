@@ -6,13 +6,23 @@ using MvsBuddy.Catalog;
 namespace MvsBuddy.Changes;
 
 /// <summary>A pak a set holds: its name, size, checksum and where it came from.</summary>
-public sealed record PakEntry(string Name, long Size, string Sha256, string? Url);
+public sealed record PakEntry(string Name, long Size, string Sha256, string? Url)
+{
+    /// <summary>
+    /// Where it goes back to, relative to the game's install folder ('/'-separated): MVS Infinite's paks live in the
+    /// game's own <c>Content/Paks</c>. Null for the profile's paks folder, where the mod's paks go.
+    /// </summary>
+    public string? Home { get; init; }
+}
 
 /// <summary>A release's pak, checked and ready to place: where its bytes are now, and whether they were just downloaded.</summary>
 internal sealed record StagedPak(string Name, long Size, string Sha256, string? Url, string Path, bool Downloaded)
 {
     /// <summary>Whether it was checked against a checksum; false for a pak GitHub and the release give none for.</summary>
     public bool Checked { get; init; } = true;
+
+    /// <summary>Where it goes, as <see cref="PakEntry.Home"/> says; null for the profile's paks folder.</summary>
+    public string? Home { get; init; }
 }
 
 /// <summary>
@@ -113,7 +123,7 @@ internal sealed class PakStore
             }
             else
             {
-                found.Add(new StagedPak(pak.Name, pak.Size, pak.Sha256, pak.Url, atHand, false));
+                found.Add(new StagedPak(pak.Name, pak.Size, pak.Sha256, pak.Url, atHand, false) { Home = pak.Home });
             }
         }
         missing = notFound;

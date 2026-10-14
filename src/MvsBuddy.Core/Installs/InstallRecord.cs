@@ -50,6 +50,19 @@ public sealed class InstallRecord
 
     internal InstallRecord Copy() => JsonSerializer.Deserialize(ToJson(), InstallRecordJsonContext.Default.InstallRecord)!;
 
+    /// <summary>The record in <paramref name="json"/>; null when it cannot be read.</summary>
+    internal static InstallRecord? FromJson(byte[] json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(json, InstallRecordJsonContext.Default.InstallRecord);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The record at <paramref name="path"/>; null when there is none or it cannot be read.</summary>
     internal static InstallRecord? Read(string path)
     {

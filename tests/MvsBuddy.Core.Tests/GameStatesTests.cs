@@ -425,6 +425,205 @@ public sealed class GameStatesTests : IDisposable
         Assert.Equal(("stray", "sig"), (Read(Path.Combine(SavedPaks, "OVS_P.utoc")), Read(Path.Combine(SavedPaks, "OVS_P.sig"))));
     }
 
+    // Season 1 by hand, plus what a clean start finds: MVS Infinite (a plugin and a pak in the game's Content/Paks), and
+    // everything else (another mod's pak, a tool's folder, a loose file). Returns the extras of each kind, as StockCheck would.
+    private List<StockExtra> ModdedEverywhere()
+    {
+        Season1Installed();
+        string Add(string text, params string[] path) => tree.File(text, [.. Rel(Root), .. path]);
+        var extras = new List<StockExtra>();
+        void Extra(string file, ExtraKind kind) => extras.Add(new StockExtra(file, Path.GetRelativePath(Root, file), new FileInfo(file).Length, kind));
+        Extra(Path.Combine(Home, "OpenVersus_2026.10.12.1.asi"), ExtraKind.OpenVersus);
+        Extra(Add("mvsi asi", "MultiVersus", "Binaries", "Win64", "plugins", "MVSIASI.asi"), ExtraKind.MvsInfinite);
+        Extra(Add("mvsi pak", "MultiVersus", "Content", "Paks", "MVSI_Content_P.pak"), ExtraKind.MvsInfinite);
+        Extra(Add("ue4ss", "MultiVersus", "Binaries", "Win64", "plugins", "UE4SS", "ue4ss.dll"), ExtraKind.Other);
+        Extra(Add("another mod", "MultiVersus", "Content", "Paks", "~mods", "Other_P.pak"), ExtraKind.Other);
+        Extra(Add("notes", "notes.txt"), ExtraKind.Other);
+        return extras;
+    }
+
+    private static List<string> Without(IEnumerable<string> listing, params string[] parts) =>
+        listing.Where(l => !parts.Any(p => l.Contains(p, StringComparison.Ordinal))).ToList();
+
+    [Fact]
+    public void A_clean_start_sets_each_kind_aside_on_its_own_and_undo_puts_back_every_byte()
+    {
+        var extras = ModdedEverywhere();
+        var buddy = Buddy();
+        var before = Everything();
+
+        var clean = buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras);
+        Assert.Null(clean.Refused);
+        Assert.Contains("Ultimate ASI Loader goes too, since no plugin is left to load through it; it comes back with whatever is put back.", clean.Summary);
+        clean.Apply();
+
+        // Stock, and the mod's log, which no state holds.
+        Assert.Equal(["MultiVersus/Binaries/Win64/MultiVersus-Win64-Shipping.exe", "MultiVersus/Binaries/Win64/plugins/OpenVersus/logs/OpenVersus.log", "MultiVersus/Content/Paks/pakchunk0-Windows.pak"],
+            Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(Root, f).Replace('\\', '/')).Order(StringComparer.Ordinal));
+        Assert.Empty(Directory.EnumerateFiles(SavedPaks));
+        Assert.Equal("pak 12", Read(tree.Path("data", "paks", "testing", "OVS_P.pak")));
+        Assert.Equal("mvsi pak", Read(tree.Path("data", "paks", "mvsi", "MVSI_Content_P.pak")));
+        Assert.Equal("MultiVersus/Content/Paks", Assert.Single(buddy.Paks.Read("mvsi")).Home);
+        var aside = buddy.States.SetAsideOf(buddy.Installs.Read(Game()));
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Testing), (SetAsideKind.MvsInfinite, null), (SetAsideKind.Rest, null)], aside.Select(a => (a.Kind, a.Channel)));
+        Assert.Equal(4, aside.Single(a => a.Kind == SetAsideKind.Rest).Files);
+        var cleaned = Everything();
+
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(before, Everything());
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(cleaned, Everything());
+        Assert.Equal(3, buddy.States.SetAsideOf(buddy.Installs.Read(Game())).Count);
+    }
+
+    [Fact]
+    public void What_a_clean_start_set_aside_comes_back_part_by_part()
+    {
+        var extras = ModdedEverywhere();
+        var buddy = Buddy();
+        var before = Everything();
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras).Apply();
+
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Null(on.Refused);
+        on.Apply();
+        Assert.Equal("state testing", Read(Path.Combine(Home, "OVSState.toml")));
+        Assert.Equal("pak 12", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.False(File.Exists(Path.Combine(Win64, "plugins", "MVSIASI.asi")), "turning OpenVersus on brings back OpenVersus only");
+
+        buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.MvsInfinite).Apply();
+        Assert.Equal("mvsi pak", Read(Path.Combine(Root, "MultiVersus", "Content", "Paks", "MVSI_Content_P.pak")));
+        Assert.False(File.Exists(Path.Combine(Root, "notes.txt")));
+
+        buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest).Apply();
+        Assert.Equal(before, Everything());
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+        Assert.NotNull(buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest).Refused);
+    }
+
+    [Fact]
+    public async Task Files_a_clean_start_put_back_stay_through_an_install_and_through_undo()
+    {
+        var extras = ModdedEverywhere().Where(e => e.Kind == ExtraKind.Other).ToList();
+        var buddy = Buddy();
+        var before = Everything();
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras).Apply();
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(before, Everything());
+
+        // Undone, they are tracked by the live state; an install must leave them be.
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+        Assert.Equal(("notes", "another mod"), (Read(Path.Combine(Root, "notes.txt")), Read(Path.Combine(Root, "MultiVersus", "Content", "Paks", "~mods", "Other_P.pak"))));
+
+        // A put-back too: undo sets them aside again, and undoing that brings them back.
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras).Apply();
+        var putBack = buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest);
+        Assert.Contains("Undo sets them aside again.", putBack.Summary);
+        putBack.Apply();
+        var back = Everything();
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.False(File.Exists(Path.Combine(Root, "notes.txt")));
+        // Set aside again, as the summary said: listed, and kept past the next change.
+        Assert.Contains(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.Rest);
+        tree.File("e", [.. Rel(Root), "e.txt"]);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [new StockExtra(Path.Combine(Root, "e.txt"), "e.txt", 1, ExtraKind.Other)]).Apply();
+        buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest).Apply();
+        Assert.Equal(back.Count + 1, Everything().Count);
+        Assert.Equal("notes", Read(Path.Combine(Root, "notes.txt")));
+    }
+
+    [Fact]
+    public void A_second_clean_start_adds_to_the_first_and_the_newer_copy_of_a_path_wins()
+    {
+        var buddy = Buddy();
+        Game();
+        string notes = tree.File("old notes", [.. Rel(Root), "notes.txt"]);
+        string a = tree.File("a", [.. Rel(Root), "a.txt"]);
+        StockExtra Other(string file) => new(file, Path.GetRelativePath(Root, file), new FileInfo(file).Length, ExtraKind.Other);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [Other(notes), Other(a)]).Apply();
+        tree.File("new notes", [.. Rel(Root), "notes.txt"]);
+        string b = tree.File("b", [.. Rel(Root), "b.txt"]);
+
+        var again = buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [Other(notes), Other(b)]);
+        Assert.Contains("1 of them was set aside before too; the copy set aside now replaces the older.", again.Summary);
+        again.Apply();
+
+        var store = States(buddy);
+        Assert.Equal(["a.txt", "b.txt", "notes.txt"], store.Paths(store.TreeOf(store.Tip("clean-start")!)).Order(StringComparer.Ordinal));
+        buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest).Apply();
+        Assert.Equal(("new notes", "a", "b"), (Read(notes), Read(a), Read(b)));
+    }
+
+    [Fact]
+    public async Task Turning_off_takes_the_loader_the_buddy_placed_and_leaves_one_it_did_not()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        var handInstalled = Everything();
+        var off = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
+        Assert.Contains("Ultimate ASI Loader stays: the buddy did not put it there.", off.Summary);
+        off.Apply();
+        Assert.True(File.Exists(Path.Combine(Win64, "version.dll")));
+        Assert.Equal(InstallStatus.LoaderOnly, buddy.Installs.Read(Game()).Status);
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing).Apply();
+        Assert.Equal(handInstalled, Everything());
+
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+        var installed = Everything();
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        Assert.False(File.Exists(Path.Combine(Win64, "version.dll")));
+        Assert.Equal(InstallStatus.NotInstalled, buddy.Installs.Read(Game()).Status);
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.StartsWith("Turns OpenVersus Testing 2026.10.13.01 back on as it was on ", on.Summary[0]);
+        on.Apply();
+        Assert.Equal(installed, Everything());
+    }
+
+    [Fact]
+    public async Task Turning_off_after_a_channel_switch_keeps_the_other_channels_paks_through_undo()
+    {
+        Game();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        var onProd = Everything();
+
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+
+        Assert.Equal(onProd, Everything());
+        Assert.Equal("testing pak", Read(tree.Path("data", "paks", "testing", "OVS_T.pak")));
+        int downloads = Requests("/paks/");
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        Assert.Equal(downloads, Requests("/paks/"));
+    }
+
+    [Fact]
+    public void What_is_deleted_for_good_cannot_be_put_back_and_its_files_are_freed()
+    {
+        var buddy = Buddy();
+        Game();
+        StockExtra Other(string file) => new(file, Path.GetRelativePath(Root, file), new FileInfo(file).Length, ExtraKind.Other);
+        string big = tree.File("only here", [.. Rel(Root), "big.bin"]);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [Other(big)]).Apply();
+        // A second clean start moves undo past the first, so only what is set aside still holds big.bin.
+        string other = tree.File("c", [.. Rel(Root), "c.txt"]);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [Other(other)]).Apply();
+        var gitDir = buddy.States.Layout(Game()).GitDir;
+        // Git's name for the file's contents: the SHA-1 of "blob <size>\0" and the bytes.
+        string blob = Convert.ToHexString(SHA1.HashData([.. Encoding.ASCII.GetBytes("blob 9\0"), .. Encoding.UTF8.GetBytes("only here")])).ToLowerInvariant();
+        string loose = Path.Combine(gitDir, "objects", blob[..2], blob[2..]);
+        Assert.True(File.Exists(loose));
+
+        buddy.States.Discard(Game(), SetAsideKind.Rest);
+
+        Assert.False(File.Exists(loose));
+        Assert.DoesNotContain(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.Rest);
+        Assert.NotNull(buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest).Refused);
+    }
+
     [Fact]
     public async Task Nothing_changes_while_the_game_runs_and_there_is_nothing_to_undo_at_first()
     {

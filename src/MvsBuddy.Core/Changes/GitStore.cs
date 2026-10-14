@@ -134,27 +134,45 @@ internal sealed class GitStore
     {
         var tree = RequireWorkTree();
         using var repo = Repo();
-        var paths = new HashSet<string>(StringComparer.Ordinal);
+        var index = repo.Index;
+        // What the last state had and has changed since, by libgit2's own look at each file's size and times: one pass,
+        // however many files are tracked. (Staging a list of paths instead matches every file against every path given,
+        // which took 70 s for 36,000 unchanged files.)
+        var changed = repo.RetrieveStatus(new StatusOptions
+        {
+            IncludeUntracked = false,
+            RecurseUntrackedDirs = false,
+            IncludeIgnored = false,
+            DetectRenamesInIndex = false,
+            DetectRenamesInWorkDir = false,
+            ExcludeSubmodules = true,
+        }).Where(e => (e.State & (FileStatus.ModifiedInWorkdir | FileStatus.DeletedFromWorkdir | FileStatus.TypeChangeInWorkdir)) != 0)
+            .Select(e => e.FilePath).ToList();
+        // And what is under the roots that the last state did not have, unless excluded.
+        var tracked = new HashSet<string>(index.Select(e => e.Path), StringComparer.Ordinal);
+        var added = new List<string>();
         foreach (string root in roots)
         {
             string full = Path.Combine(tree, root);
-            if (File.Exists(full))
-            {
-                paths.Add(root);
-            }
-            else if (Directory.Exists(full))
-            {
-                paths.UnionWith(Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories).Select(f => Relative(tree, f)));
-            }
+            var files = File.Exists(full) ? [root]
+                : Directory.Exists(full) ? Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories).Select(f => Relative(tree, f))
+                : [];
+            added.AddRange(files.Where(f => !tracked.Contains(f) && !repo.Ignore.IsPathIgnored(f)));
         }
-        // What the last state had: staging a path that is gone records the removal.
-        paths.UnionWith(repo.Index.Select(e => e.Path));
-        if (paths.Count > 0)
+        foreach (string path in changed.Concat(added).Distinct(StringComparer.Ordinal))
         {
-            Commands.Stage(repo, paths);
+            if (File.Exists(Path.Combine(tree, path)))
+            {
+                index.Add(path);
+            }
+            else
+            {
+                index.Remove(path);
+            }
         }
-        var commit = CommitOn(repo, repo.Head.CanonicalName, repo.ObjectDatabase.CreateTree(repo.Index), message);
-        log.LogInformation("Snapshot of {Count} paths as {Commit} on {Branch}", paths.Count, Short(commit), repo.Head.FriendlyName);
+        index.Write();
+        var commit = CommitOn(repo, repo.Head.CanonicalName, repo.ObjectDatabase.CreateTree(index), message);
+        log.LogInformation("Snapshot of {Changed} changed and {Added} new paths as {Commit} on {Branch}", changed.Count, added.Count, Short(commit), repo.Head.FriendlyName);
         return commit;
     }
 
@@ -211,12 +229,17 @@ internal sealed class GitStore
     {
         using var repo = Repo();
         var definition = baseTree == null ? new TreeDefinition() : TreeDefinition.From(repo.Lookup<Tree>(baseTree));
+        var sources = new Dictionary<string, Tree>(StringComparer.Ordinal);
         foreach (var edit in edits)
         {
             switch (edit)
             {
                 case Graft graft:
-                    var entry = repo.Lookup<Tree>(graft.FromTree)[graft.FromPath]
+                    if (!sources.TryGetValue(graft.FromTree, out var source))
+                    {
+                        sources[graft.FromTree] = source = repo.Lookup<Tree>(graft.FromTree);
+                    }
+                    var entry = source[graft.FromPath]
                         ?? throw new ChangeException($"{graft.FromPath} is not in {Short(graft.FromTree)}.");
                     definition.Remove(graft.Path);
                     definition.Add(graft.Path, entry);
@@ -241,6 +264,14 @@ internal sealed class GitStore
     {
         using var repo = Repo();
         return repo.Lookup<Tree>(tree)[path] != null;
+    }
+
+    /// <summary>How many files <paramref name="tree"/> holds, and their size.</summary>
+    internal (int Files, long Bytes) Size(string tree)
+    {
+        using var repo = Repo();
+        var files = Files(repo.Lookup<Tree>(tree)).ToList();
+        return (files.Count, files.Sum(e => repo.ObjectDatabase.RetrieveObjectMetadata(e.Target.Id).Size));
     }
 
     /// <summary>The message <paramref name="commit"/> was made with, and when.</summary>

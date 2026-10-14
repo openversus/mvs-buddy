@@ -24,7 +24,7 @@ public sealed class InstallReader
     ];
 
     // The old layout's files beside its plugin (ovs-client Layout.ModFiles, current and legacy names).
-    private static readonly string[] OldLayoutNames =
+    internal static readonly string[] OldLayoutNames =
     [
         "OpenVersus.asi", OldSettingsFile, SettingsFile, "OVSState.ini", "OVSState.toml", "PatternsCache.cache", "PatternsCache.toml",
     ];
