@@ -17,6 +17,19 @@
     <PackageReference Include="System.Security.Principal.Windows" Version="5.0.0" />
     <PackageReference Include="Tomlyn" Version="2.10.1" />
   </ItemGroup>
+  <!-- The external/LibGit2Sharp submodule as netstandard2.0: scripts/patch-libgit2sharp.sh applies patches/LibGit2Sharp first.
+       Unpatched, NuGet quietly takes LibGit2Sharp's net472 build instead (warning NU1702), which is not the library the
+       buddy is checked with; the build stops instead. -->
+  <PropertyGroup>
+    <LibGit2SharpProject>$(MSBuildThisFileDirectory)../../external/LibGit2Sharp/LibGit2Sharp/LibGit2Sharp.csproj</LibGit2SharpProject>
+    <LibGit2SharpPatched Condition="Exists('$(LibGit2SharpProject)')">$([System.IO.File]::ReadAllText('$(LibGit2SharpProject)').Contains('&lt;TargetFramework&gt;netstandard2.0&lt;/TargetFramework&gt;'))</LibGit2SharpPatched>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(LibGit2SharpProject)" />
+  </ItemGroup>
+  <Target Name="RequirePatchedLibGit2Sharp" BeforeTargets="ResolveProjectReferences">
+    <Error Condition="'$(LibGit2SharpPatched)' != 'True'" Text="external/LibGit2Sharp is not patched for netstandard2.0: run scripts/patch-libgit2sharp.sh (after git submodule update --init --recursive)." />
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="MvsBuddy.Core.Tests" />

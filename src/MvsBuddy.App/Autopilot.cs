@@ -43,6 +43,8 @@ internal sealed class Autopilot(RmlWindow window, UiThread ui, IEnumerable<strin
             window.RequestExit();
             return;
         }
+        // A button below the fold is scrolled to first, as a person would.
+        button.ScrollIntoView(false);
         var at = button.GetAbsoluteOffset(BoxArea.Border);
         int x = (int)(at.X + button.GetOffsetWidth() / 2), y = (int)(at.Y + button.GetOffsetHeight() / 2);
         window.Context.ProcessMouseMove(x, y, 0);

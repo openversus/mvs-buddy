@@ -1,0 +1,43 @@
+LibGit2Sharp as netstandard2.0, for MvsBuddy.Core (netstandard2.0): the library targets net472;net8.0 upstream.
+NativeMethods: NativeLibrary does not exist in netstandard2.0, so that build takes the fallback that .NET Framework
+takes (TryUseNativeLibrary() => false): libgit2 is found by the runtime's default native probing, which in a
+single-file executable is the folder the native libraries are extracted to. PolySharp supplies the attributes.
+Applied by scripts/patch-libgit2sharp.sh.
+
+diff --git a/LibGit2Sharp/Core/NativeMethods.cs b/LibGit2Sharp/Core/NativeMethods.cs
+index cbb850b1..2c131f85 100644
+--- a/LibGit2Sharp/Core/NativeMethods.cs
++++ b/LibGit2Sharp/Core/NativeMethods.cs
+@@ -68,7 +68,7 @@ private static string GetGlobalSettingsNativeLibraryPath()
+             return Path.Combine(nativeLibraryDir, libgit2 + Platform.GetNativeLibraryExtension());
+         }
+ 
+-#if NETFRAMEWORK
++#if NETSTANDARD2_0
+         private static bool TryUseNativeLibrary() => false;
+ #else
+         private static bool TryUseNativeLibrary()
+diff --git a/LibGit2Sharp/LibGit2Sharp.csproj b/LibGit2Sharp/LibGit2Sharp.csproj
+index 1e884486..127ec5a8 100644
+--- a/LibGit2Sharp/LibGit2Sharp.csproj
++++ b/LibGit2Sharp/LibGit2Sharp.csproj
+@@ -1,7 +1,7 @@
+ ﻿<Project Sdk="Microsoft.NET.Sdk">
+ 
+   <PropertyGroup>
+-    <TargetFrameworks>net472;net8.0</TargetFrameworks>
++    <TargetFramework>netstandard2.0</TargetFramework>
+     <LangVersion>12.0</LangVersion>
+     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+     <Description>LibGit2Sharp brings all the might and speed of libgit2, a native Git implementation, to the managed world of .NET</Description>
+@@ -31,6 +31,10 @@
+   <ItemGroup>
+     <PackageReference Include="LibGit2Sharp.NativeBinaries" Version="[2.0.324]" PrivateAssets="none" />
+     <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="all" />
++    <PackageReference Include="PolySharp" Version="1.16.0">
++      <PrivateAssets>all</PrivateAssets>
++      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
++    </PackageReference>
+   </ItemGroup>
+ 
+   <ItemGroup>

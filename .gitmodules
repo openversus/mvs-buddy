@@ -1,3 +1,7 @@
 [submodule "external/RmlUiFlat"]
 	path = external/RmlUiFlat
 	url = https://github.com/openversus/RmlUiFlat.git
+[submodule "external/LibGit2Sharp"]
+	path = external/LibGit2Sharp
+	url = https://github.com/libgit2/libgit2sharp.git
+	ignore = dirty
