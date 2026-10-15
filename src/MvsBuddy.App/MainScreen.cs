@@ -339,6 +339,11 @@ internal sealed class MainScreen
                         progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
             }
         }
+        if (s.WineOverridesMissing.Count > 0)
+        {
+            rml.Append(Button("Set Wine to load the loader", () => Prepare("Set Wine to load the loader?", _ => buddy.States.PrepareWineSetting(s),
+                "Wine loads the loader from the game's folder now."), "primary"));
+        }
         if (canUndo)
         {
             rml.Append(Button("Undo the last change", () => Prepare("Undo the last change?", progress => buddy.States.PrepareUndo(s, progress), "The last change was undone.")));

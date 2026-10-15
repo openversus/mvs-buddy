@@ -120,6 +120,20 @@ public sealed class InstallReader
         {
             notes.Add($"The game's Content{Path.DirectorySeparatorChar}Paks holds paks that are neither the game's nor OpenVersus's ({string.Join(", ", elsePaks.Select(p => Relative(game_, p.Path)))}): another mod's, which can conflict with OpenVersus.");
         }
+        // Under Wine, a loader under a name Wine has a DLL of its own for loads only when the prefix says native first.
+        string? wineRegistry = game.WinePrefix is string prefix && File.Exists(WineRegistry.FileIn(prefix)) ? WineRegistry.FileIn(prefix) : null;
+        var overridesMissing = new List<string>();
+        if (wineRegistry != null)
+        {
+            string registry = File.ReadAllText(wineRegistry);
+            overridesMissing.AddRange(ual.Select(l => Path.GetFileNameWithoutExtension(l.FileName).ToLowerInvariant()).Distinct().Where(dll => !WineRegistry.LoadsNative(registry, dll)));
+        }
+        if (overridesMissing.Count > 0)
+        {
+            // Steam's launch options can set it too (WINEDLLOVERRIDES), which the registry does not show.
+            notes.Add($"The game's Wine prefix does not load {string.Join(", ", overridesMissing.Select(d => d + ".dll"))} from the game's folder; unless the game's "
+                + "Steam launch options do (WINEDLLOVERRIDES), no ASI plugin runs. The buddy can set it in the prefix.");
+        }
         bool notStarted = NotStartedYet(game);
         if (notStarted)
         {
@@ -161,6 +175,8 @@ public sealed class InstallReader
             Record = record,
             Channel = ChannelOf(mod, record),
             Notes = notes,
+            WineRegistry = wineRegistry,
+            WineOverridesMissing = overridesMissing,
         };
         log.LogInformation("{Folder}: {Status}, {Layout} layout {Version}, loaders [{Loaders}], other plugins [{Others}], {Paks} paks in {SavedPaks}",
             win64, state.Status, mod.Layout, mod.Version, string.Join(", ", loaders.Select(l => l.FileName)),

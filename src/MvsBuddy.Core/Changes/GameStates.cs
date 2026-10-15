@@ -287,6 +287,13 @@ public sealed class GameStates
         {
             summary.Add($"Not checked, since neither GitHub nor the release gives a checksum for them: {string.Join(", ", notChecked)}.");
         }
+        // Under Wine, the loader loads only when the prefix says native first for its name.
+        string loaderDll = Path.GetFileNameWithoutExtension(loaderName).ToLowerInvariant();
+        bool setWine = state.WineRegistry is string registry && !WineRegistry.LoadsNative(File.ReadAllText(registry), loaderDll);
+        if (setWine)
+        {
+            summary.AddRange(WineLines(state, [loaderDll]));
+        }
         summary.Add(UndoLine(state, "Undo puts the mod, the loader and the paks back as they are now"));
 
         string? asi = cacheStore.Paths(cached.Tree).FirstOrDefault(p => p.StartsWith(Home, StringComparison.Ordinal)
@@ -314,14 +321,73 @@ public sealed class GameStates
         byte[] recordBytes = record.ToJson();
         log.LogInformation("Prepared {Release} for {Folder}: {Summary}", release.Tag, copy.WorkTree, string.Join(" | ", summary));
 
-        return new PreparedChange(summary, merge, refused, report => Change(report, state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
-            $"OpenVersus {version} ({release.Channel})", refused,
-            // The release's paks; MVS Infinite's stay where they are, unless it is set aside: then they leave as its set.
-            (_, live) => [.. staged, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
-            (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes)
-                .Concat(mvsi.Select(p => (TreeEdit)new Removal(p)))),
-            (store, before) => SetMvsInfiniteAside(store, before, mvsi),
-            mvsi));
+        return new PreparedChange(summary, merge, refused, report =>
+        {
+            Change(report, state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
+                $"OpenVersus {version} ({release.Channel})", refused,
+                // The release's paks; MVS Infinite's stay where they are, unless it is set aside: then they leave as its set.
+                (_, live) => [.. staged, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
+                (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes)
+                    .Concat(mvsi.Select(p => (TreeEdit)new Removal(p)))),
+                (store, before) => SetMvsInfiniteAside(store, before, mvsi),
+                mvsi);
+            if (setWine)
+            {
+                try
+                {
+                    SetWineNative(state.WineRegistry!, [loaderDll]);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    throw new ChangeException($"OpenVersus is installed, but Wine's setting could not be written ({e.Message}); the game's screen offers to set it.", e);
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets telling Wine to load the live loader (each copy of it) from the game's folder ready: the prefix's registry gets
+    /// native first for its name. Not a change of state, and nothing to undo; it does nothing without a loader there.
+    /// </summary>
+    public PreparedChange PrepareWineSetting(InstallState state)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        if (state.WineRegistry is not string registry || state.WineOverridesMissing.Count == 0)
+        {
+            const string nothing = "Wine is already set to load the loader from the game's folder.";
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
+        }
+        var dlls = state.WineOverridesMissing;
+        return new PreparedChange(WineLines(state, dlls).ToList(), null, null, _ => SetWineNative(registry, dlls));
+    }
+
+    private static IEnumerable<string> LiveLoaderDlls(InstallState state) =>
+        state.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => Path.GetFileNameWithoutExtension(l.FileName).ToLowerInvariant());
+
+    // What setting Wine's override says; and, while Wine runs in the game's prefix, that it may write over it when it ends.
+    private IEnumerable<string> WineLines(InstallState state, IEnumerable<string> dlls)
+    {
+        yield return $"Wine is set to load {string.Join(", ", dlls.Select(d => d + ".dll"))} from the game's folder (in the game's Wine prefix), which the loader needs.";
+        if (state.Game.WinePrefix is string prefix && host.IsWineRunningIn(prefix))
+        {
+            yield return "Wine is running in the game's prefix right now, and may write over this setting when it ends. If the buddy says it is missing later, set it again with the game closed.";
+        }
+    }
+
+    // The registry with native first for each DLL, written beside it and then put in its place.
+    private static void SetWineNative(string registry, IEnumerable<string> dlls)
+    {
+        string text = File.ReadAllText(registry);
+        foreach (string dll in dlls)
+        {
+            text = WineRegistry.WithNative(text, dll, DateTimeOffset.Now);
+        }
+        string written = registry + ".mvs-buddy";
+        File.WriteAllText(written, text);
+        File.Replace(written, registry, null);
     }
 
     /// <summary>
@@ -421,6 +487,10 @@ public sealed class GameStates
         if (state.Mod.Files.Any(f => f.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar)))
         {
             summary.Add("The mod's logs stay in plugins/OpenVersus/logs: the buddy never touches them.");
+        }
+        if (state.WineRegistry is string wine && LiveLoaderDlls(state).Concat(["version"]).Distinct().FirstOrDefault(d => WineRegistry.LoadsNative(File.ReadAllText(wine), d)) is string set)
+        {
+            summary.Add($"Wine's setting to load {set}.dll from the game's folder stays; it does nothing without a loader there.");
         }
         string? refused = inGame || kept.Count > 0 ? null : "There is no OpenVersus here to uninstall.";
         summary.Add(refused ?? "There is no undo for this: to have OpenVersus again, install it.");

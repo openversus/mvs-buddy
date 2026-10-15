@@ -27,6 +27,9 @@ internal sealed class HostSystem
     /// <summary>Whether MultiVersus is running now.</summary>
     internal Func<bool> IsGameRunning { get; init; } = () => false;
 
+    /// <summary>Whether Wine runs in this prefix (its wineserver), which may write the prefix's registry files over when it ends.</summary>
+    internal Func<string, bool> IsWineRunningIn { get; init; } = _ => false;
+
     /// <summary>
     /// Whether this account is refused changes in an existing folder: adding files and folders to it and taking them out.
     /// True only when the system answers "access denied"; any other answer (the folder busy, gone, on an odd file system)
@@ -63,6 +66,7 @@ internal sealed class HostSystem
             Registry = windows ? ReadRegistry : (_, _) => null,
             SearchRoots = windows ? FixedDrives : LinuxSearchRoots,
             IsGameRunning = windows ? GameRunningOnWindows : GameRunningUnderWine,
+            IsWineRunningIn = windows ? _ => false : WineRunningIn,
             IsChangeDenied = windows ? ChangeDeniedOnWindows : ChangeDeniedOnUnix,
             UserSid = windows ? WindowsUserSid : () => null,
             RunElevated = windows ? RunElevatedOnWindows : (_, _, _) => Task.FromResult<int?>(null),
@@ -158,6 +162,43 @@ internal sealed class HostSystem
             process.Dispose();
         }
         return processes.Length > 0;
+    }
+
+    // A wineserver for this prefix: it keeps files in its prefix open (seen: drive_c/windows/system32), so one of its open
+    // files is under it. Its environment does not name the prefix (Proton's and Bottles' wineservers carry no WINEPREFIX).
+    // Wine in other prefixes does not count.
+    internal static bool WineRunningIn(string prefix)
+    {
+        var resolve = new HostSystem();
+        string wanted = resolve.RealPath(prefix).TrimEnd('/');
+        try
+        {
+            foreach (string process in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(process), out _))
+                {
+                    continue;
+                }
+                try
+                {
+                    if (File.ReadAllText(Path.Combine(process, "comm")).Trim() == "wineserver"
+                        && Directory.EnumerateFileSystemEntries(Path.Combine(process, "fd")).Select(resolve.RealPath)
+                            .Any(open => open == wanted || open.StartsWith(wanted + "/", StringComparison.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    // A process that ended, or one that is not ours to read.
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            return false;
+        }
+        return false;
     }
 
     // Under Wine or Proton the process name is cut to 15 characters, so the program each process runs is read from its

@@ -164,6 +164,15 @@ public sealed record InstallState
     /// </summary>
     public bool NeedsFirstLaunch { get; init; }
 
+    /// <summary>Under Wine: the prefix's <c>user.reg</c>, where Wine is told to load the loader from the game's folder; null when there is none.</summary>
+    public string? WineRegistry { get; init; }
+
+    /// <summary>
+    /// Under Wine: the names (without <c>.dll</c>) of the live Ultimate ASI Loader copies that Wine is not told to load
+    /// native first, so it loads its own DLL of that name and no plugin runs. Empty when there are none, or not under Wine.
+    /// </summary>
+    public IReadOnlyList<string> WineOverridesMissing { get; init; } = [];
+
     /// <summary>What the buddy wrote down when it installed the mod here; null when it did not, or the mod is not here.</summary>
     public InstallRecord? Record { get; init; }
 

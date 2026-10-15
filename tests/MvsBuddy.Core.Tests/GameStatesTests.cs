@@ -42,8 +42,8 @@ public sealed class GameStatesTests : IDisposable
         LicenseUrl = new Uri("https://example.test/ual/license"),
     };
 
-    private Buddy Buddy(Func<bool>? running = null) => new BuddyBuilder().Http(new HttpClient(server)).AsiLoader(Pin())
-        .Host(new HostSystem { Home = tree.Path("home"), DataDirectory = tree.Path("data"), IsGameRunning = running ?? (() => false) }).Build();
+    private Buddy Buddy(Func<bool>? running = null, Func<string, bool>? wine = null) => new BuddyBuilder().Http(new HttpClient(server)).AsiLoader(Pin())
+        .Host(new HostSystem { Home = tree.Path("home"), DataDirectory = tree.Path("data"), IsGameRunning = running ?? (() => false), IsWineRunningIn = wine ?? (_ => false) }).Build();
 
     private string Root => tree.Path("steamapps", "common", "MultiVersus");
 
@@ -904,6 +904,53 @@ public sealed class GameStatesTests : IDisposable
         {
             Assert.Null(install.Refused);
         }
+    }
+
+    private string UserReg => tree.Path("steamapps", "compatdata", "1818750", "pfx", "user.reg");
+
+    private const string Registry = "WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\DllOverrides] 1700000000\n#time=1da0000000000000\n\"*dxgi\"=\"native\"\n";
+
+    [Fact]
+    public async Task Under_wine_an_install_sets_the_loader_native_first_and_warns_while_wine_runs_in_the_games_prefix()
+    {
+        Game();
+        File.WriteAllText(UserReg, Registry);
+        string prefix = tree.Path("steamapps", "compatdata", "1818750", "pfx");
+        var buddy = Buddy(wine: p => p == prefix);
+
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }));
+        Assert.Contains("Wine is set to load version.dll from the game's folder (in the game's Wine prefix), which the loader needs.", install.Summary);
+        Assert.Contains(install.Summary, l => l.StartsWith("Wine is running in the game's prefix right now", StringComparison.Ordinal));
+        Assert.Null(install.Refused);
+        install.Apply();
+        Assert.True(WineRegistry.LoadsNative(Read(UserReg), "version"));
+        Assert.Contains("\"*dxgi\"=\"native\"", Read(UserReg));
+        Assert.Empty(buddy.Installs.Read(Game()).WineOverridesMissing);
+
+        // Set already: the next install leaves the file alone and says nothing of it.
+        string set = Read(UserReg);
+        var again = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.2", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }));
+        Assert.DoesNotContain(again.Summary, l => l.StartsWith("Wine is set", StringComparison.Ordinal));
+        again.Apply();
+        Assert.Equal(set, Read(UserReg));
+        Assert.Contains("Wine's setting to load version.dll from the game's folder stays; it does nothing without a loader there.", buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Summary);
+    }
+
+    [Fact]
+    public void A_hand_install_without_the_wine_setting_is_told_about_and_set_on_request()
+    {
+        Season1Installed();
+        File.WriteAllText(UserReg, Registry);
+        var buddy = Buddy();
+
+        var state = buddy.Installs.Read(Game());
+        Assert.Equal(["version"], state.WineOverridesMissing);
+        Assert.Contains(state.Notes, n => n.StartsWith("The game's Wine prefix does not load version.dll from the game's folder", StringComparison.Ordinal) && !n.Contains("MVS Infinite"));
+
+        buddy.States.PrepareWineSetting(state).Apply();
+
+        Assert.Empty(buddy.Installs.Read(Game()).WineOverridesMissing);
+        Assert.NotNull(buddy.States.PrepareWineSetting(buddy.Installs.Read(Game())).Refused);
     }
 
     // Whether the release cache still has a file of these contents (git's name for it: the SHA-1 of "blob <size>\0" and the bytes).
