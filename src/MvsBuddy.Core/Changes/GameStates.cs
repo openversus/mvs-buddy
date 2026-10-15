@@ -10,9 +10,9 @@ namespace MvsBuddy.Changes;
 /// <summary>A change to a copy of the game, ready to apply: what it needs is downloaded and checked, and nothing in the game has changed.</summary>
 public sealed class PreparedChange
 {
-    private readonly Action apply;
+    private readonly Action<IProgress<string>?> apply;
 
-    internal PreparedChange(IReadOnlyList<string> summary, SettingsMergeResult? settings, string? refused, Action apply)
+    internal PreparedChange(IReadOnlyList<string> summary, SettingsMergeResult? settings, string? refused, Action<IProgress<string>?> apply)
     {
         Summary = summary;
         Settings = settings;
@@ -36,7 +36,11 @@ public sealed class PreparedChange
     /// cannot be moved, the game's files are put back as they were.
     /// </summary>
     /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
-    public void Apply() => apply();
+    public void Apply() => apply(null);
+
+    /// <summary>Makes the change as <see cref="Apply()"/> does, telling <paramref name="progress"/> what it is doing as it goes.</summary>
+    /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
+    public void Apply(IProgress<string>? progress) => apply(progress);
 }
 
 /// <summary>What a set-aside holds: OpenVersus of a channel, MVS Infinite, or everything else a clean start set aside.</summary>
@@ -276,13 +280,18 @@ public sealed class GameStates
                 : null,
             Plugin = asi == null ? null : new RecordedFile { Name = asi.Substring(Home.Length), Sha256 = Sha256(cacheStore.Read(cached.Tree, asi)!) },
             Paks = staged.Select(p => new RecordedFile { Name = p.Name, Url = p.Url, Sha256 = p.Sha256 }).ToList(),
-            Loader = new RecordedFile { Name = loaderName, Version = pin.Version, Sha256 = pin.DllSha256 },
+            // The buddy's loader only when it puts it there, or did before (the record says so): the same build already in
+            // place is the person's, and a turn-off or uninstall leaves it.
+            Loader = atName is { IsPinnedBuild: true } && !(state.Record?.Loader is { } before
+                    && string.Equals(before.Name, loaderName, StringComparison.OrdinalIgnoreCase) && before.Sha256 == atName.Sha256)
+                ? null
+                : new RecordedFile { Name = loaderName, Version = pin.Version, Sha256 = pin.DllSha256 },
         };
         byte[]? settingsBytes = merge == null ? null : Encoding.UTF8.GetBytes(merge.Text);
         byte[] recordBytes = record.ToJson();
         log.LogInformation("Prepared {Release} for {Folder}: {Summary}", release.Tag, copy.WorkTree, string.Join(" | ", summary));
 
-        return new PreparedChange(summary, merge, refused, () => Change(state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
+        return new PreparedChange(summary, merge, refused, report => Change(report, state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
             $"OpenVersus {version} ({release.Channel})", refused,
             // The release's paks; MVS Infinite's stay where they are.
             (_, live) => [.. staged, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
@@ -305,7 +314,7 @@ public sealed class GameStates
         if (previous == null)
         {
             const string nothing = "There is nothing to undo for this copy of the game yet.";
-            return new PreparedChange([nothing], null, nothing, () => throw new ChangeException(nothing));
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
         }
         var store = Open(copy);
         var (message, at) = store.Describe(previous);
@@ -316,7 +325,7 @@ public sealed class GameStates
         summary.Add("Undoing again brings back what is here now.");
         string tree = store.TreeOf(previous);
         return new PreparedChange(summary, null, refused,
-            () => Change(state.Game, "before an undo", $"Undo: {what}", refused, (_, _) => found, (_, _, _) => tree, restoresSets: true));
+            report => Change(report, state.Game, "before an undo", $"Undo: {what}", refused, (_, _) => found, (_, _, _) => tree, restoresSets: true));
     }
 
     /// <summary>
@@ -326,6 +335,175 @@ public sealed class GameStates
     /// </summary>
     public PreparedChange PrepareTurnOff(InstallState state) =>
         SetAside(state ?? throw new ArgumentNullException(nameof(state)), openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true);
+
+    /// <summary>
+    /// Gets uninstalling OpenVersus ready: its files and its paks are deleted, and Ultimate ASI Loader with them when the
+    /// buddy put it there (its install record names it) and no other plugin is left to load through it; a loader put there
+    /// some other way stays, and so do the mod's logs. Nothing of OpenVersus is kept for this copy afterwards: the saved
+    /// state and paks of every channel kept for it go too. There is no undo; to have OpenVersus again, it is installed again.
+    /// </summary>
+    public PreparedChange PrepareUninstall(InstallState state)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        var copy = Layout(state.Game);
+        var (ovsPaths, _, staying, loaderPaths, live) = WhatGoes(state, copy, openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true);
+        // Without the profile's folder (a prefix not known) the mod's paks are left where they are, as by every change.
+        var goingPaks = state.SavedPaksDirectory == null ? [] : live;
+        var kept = SetAsideOf(state).Where(s => s.Kind == SetAsideKind.OpenVersus).Select(s => s.Channel!.Value).ToList();
+        bool installed = state.Mod.Layout != ModLayout.None;
+        bool inGame = installed || goingPaks.Count > 0 || loaderPaths.Count > 0;
+
+        var summary = new List<string>();
+        if (installed)
+        {
+            summary.Add($"Deletes OpenVersus{(state.Mod.Version is { } v ? " " + ModVersion.Text(v) : "")}{(state.Channel is { } c ? $" ({c.Channel})" : "")} from the game's folder.");
+        }
+        if (goingPaks.Count > 0)
+        {
+            summary.Add(goingPaks.Count == 1 ? "Deletes its pak." : $"Deletes its {goingPaks.Count} paks.");
+        }
+        else if (live.Count > 0)
+        {
+            summary.Add("Its paks stay where they are: " + (state.NeedsFirstLaunch ? InstallReader.FirstLaunchNote
+                : "the buddy cannot tell which Wine prefix this copy runs in."));
+        }
+        foreach (var channel in kept)
+        {
+            summary.Add($"Deletes OpenVersus {channel}, kept for this copy, with its saved state and its paks.");
+        }
+        bool loader = state.Loaders.Any(l => l.IsUltimateAsiLoader);
+        if (loaderPaths.Count > 0)
+        {
+            summary.Add("Deletes Ultimate ASI Loader too: the buddy put it there, and no plugin is left to load through it.");
+        }
+        else if (loader && staying.Count > 0)
+        {
+            summary.Add($"Ultimate ASI Loader stays: {string.Join(", ", staying)} still loads through it.");
+        }
+        else if (loader)
+        {
+            summary.Add("Ultimate ASI Loader stays: the buddy did not put it there.");
+        }
+        if (state.Mod.Files.Any(f => f.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar)))
+        {
+            summary.Add("The mod's logs stay in plugins/OpenVersus/logs: the buddy never touches them.");
+        }
+        string? refused = inGame || kept.Count > 0 ? null : "There is no OpenVersus here to uninstall.";
+        summary.Add(refused ?? "There is no undo for this: to have OpenVersus again, install it.");
+        log.LogInformation("Uninstall prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
+
+        var removed = ovsPaths.Concat(loaderPaths).Distinct(StringComparer.Ordinal).ToList();
+        return new PreparedChange(summary, null, refused, report =>
+        {
+            if (inGame)
+            {
+                Change(report, state.Game, "before OpenVersus was uninstalled", "OpenVersus, uninstalled", refused,
+                    // The mod's paks leave as its channel's set, which Forget deletes; MVS Infinite's stay where they are.
+                    (_, live) => live.Where(p => p.Home != null).Select(p => p.InPlace).ToList(),
+                    (store, _, before) => store.Edit(before, removed.Select(p => (TreeEdit)new Removal(p))),
+                    (store, _) => Forget(store));
+                return;
+            }
+            if (refused != null)
+            {
+                throw new ChangeException(refused);
+            }
+            // Only kept states: nothing in the game changes.
+            var store = Open(copy);
+            Forget(store);
+            store.Prune();
+        });
+    }
+
+    // The end of an uninstall: no channel's state or paks are kept for this copy, and there is nothing to undo.
+    private void Forget(GitStore store)
+    {
+        foreach (var channel in new[] { Channel.Prod, Channel.Testing })
+        {
+            store.DeleteBranch(ReleaseCache.BranchOf(channel));
+        }
+        store.DeleteBranch(PreviousBranch);
+        foreach (string set in SetBranches)
+        {
+            store.DeleteBranch(PreviousOf + set);
+        }
+        foreach (string set in new[] { ReleaseCache.BranchOf(Channel.Prod), ReleaseCache.BranchOf(Channel.Testing), OtherPaks })
+        {
+            if (Directory.Exists(paks.Folder(set)))
+            {
+                Directory.Delete(paks.Folder(set), recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets writing down that the installed OpenVersus is <paramref name="channel"/> ready, as the person says: its record
+    /// (see <see cref="InstallRecord"/>) is kept, or made, with that channel. Nothing else moves, and there is nothing to
+    /// undo; the next change files what is here under that channel, and what an earlier change filed of this same install
+    /// under the old one is not kept as the old one any more. The current layout only, which has a folder for the record.
+    /// </summary>
+    public PreparedChange PrepareSetChannel(InstallState state, Channel channel)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        if (state.Mod.Layout != ModLayout.Current)
+        {
+            const string only = "Only the current OpenVersus layout keeps a record of its channel.";
+            return new PreparedChange([only], null, only, _ => throw new ChangeException(only));
+        }
+        string path = Path.Combine(state.Game.Win64Directory, "plugins", InstallReader.ModFolder, InstallRecord.FileName);
+        var record = state.Record?.Copy() ?? new InstallRecord { Version = state.Mod.Version is { } v ? ModVersion.Text(v) : null };
+        record.Channel = channel.ToString();
+        record.ChannelFrom = "person";
+        record.At = DateTimeOffset.Now;
+        record.Buddy = BuddyVersion.Current;
+        var plan = new ChangePlan(host, log);
+        if (File.Exists(path))
+        {
+            plan.Delete(path);
+        }
+        plan.Write(path, record.ToJson());
+        var summary = new List<string> { $"The buddy counts this copy's OpenVersus as {channel} from now on." };
+
+        // A change made before the correction filed this very install under the old channel, which is not a kept state of
+        // that channel: it goes. The same install: one InstallId, or neither ever run. Its pak set stays, as undo may need it.
+        string? misfiled = null;
+        var copy = Layout(state.Game);
+        if (state.Channel is { } old && old.Channel != channel && LibGit2Sharp.Repository.IsValid(copy.GitDir))
+        {
+            var store = Open(copy);
+            string branch = ReleaseCache.BranchOf(old.Channel);
+            if (store.Tip(branch) is string tip && store.TreeOf(tip) is string tree && store.Has(tree, copy.Prefix + Home.TrimEnd('/')))
+            {
+                string live = Path.Combine(state.Game.Win64Directory, "plugins", InstallReader.ModFolder, StateFile);
+                if (InstallId(File.Exists(live) ? File.ReadAllBytes(live) : null) == InstallId(store.Read(tree, copy.Prefix + Home + StateFile)))
+                {
+                    misfiled = branch;
+                    summary.Add($"What the buddy kept as OpenVersus {old.Channel} is this same install, so it is not kept as {old.Channel} any more.");
+                }
+            }
+        }
+        return new PreparedChange(summary, null, null, _ =>
+        {
+            plan.Apply();
+            if (misfiled != null)
+            {
+                var store = Open(copy);
+                store.DeleteBranch(misfiled);
+                store.Prune();
+            }
+        });
+    }
+
+    // Which install of the mod a state is: the [Identity] InstallId of its OVSState.toml, which the mod makes once and which
+    // never crosses channels; null when it has none (never run).
+    private static string? InstallId(byte[]? state) =>
+        state == null ? null : TomlSettings.Parse(Encoding.UTF8.GetString(state), StateFile).Get("Identity", "InstallId");
 
     /// <summary>
     /// Gets a clean start ready: <paramref name="extras"/> (from <see cref="StockCheck"/>, all of them or the person's pick)
@@ -345,9 +523,16 @@ public sealed class GameStates
             picked.Where(e => e.Kind == ExtraKind.Other).Select(e => Relative(copy, e.Path)).OfType<string>().ToList());
     }
 
-    private PreparedChange SetAside(InstallState state, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader = false)
+    /// <summary>What a set-aside or an uninstall takes out of the game, as the store names it.</summary>
+    /// <param name="OpenVersus">The mod's own files (not the loader).</param>
+    /// <param name="MvsInfinite">MVS Infinite's plugins.</param>
+    /// <param name="Staying">The plugins left to load through Ultimate ASI Loader, by file name.</param>
+    /// <param name="Loader">Ultimate ASI Loader and its license, when they go.</param>
+    /// <param name="Paks">The live paks that go.</param>
+    private sealed record Going(List<string> OpenVersus, List<string> MvsInfinite, List<string> Staying, List<string> Loader, List<PakAt> Paks);
+
+    private static Going WhatGoes(InstallState state, CopyLayout copy, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader)
     {
-        var copy = Layout(state.Game);
         // The mod's own files only: whether the loader and its license go is decided below, by its own rule.
         var ovsPaths = openVersus
             ? new[] { copy.Prefix + Home.TrimEnd('/') }.Concat(state.Mod.Files.Concat(state.Mod.OldLayoutFiles).Select(f => Relative(copy, f)).OfType<string>()).Distinct(StringComparer.Ordinal).ToList()
@@ -357,9 +542,17 @@ public sealed class GameStates
         var going = new HashSet<string>(ovsPaths.Concat(mvsiPaths).Concat(others), StringComparer.Ordinal);
         var staying = state.Mod.Plugins.Concat(state.Mod.OldLayoutFiles.Where(f => f.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)))
             .Concat(state.OtherPlugins.Select(p => p.Path)).Where(p => !(openVersus && IsOpenVersusPlugin(state, p)) && Relative(copy, p) is string r && !going.Contains(r))
-            .Select(Path.GetFileName).Distinct().ToList();
+            .Select(Path.GetFileName).OfType<string>().Distinct().ToList();
         var loaderPaths = staying.Count == 0 && going.Count > 0 ? LoaderPaths(state, copy, onlyOurLoader) : [];
         var goingPaks = LivePaths(state, copy).Where(p => (openVersus && p.Home == null) || (mvsInfinite && p.Home != null)).ToList();
+        return new Going(ovsPaths, mvsiPaths, staying, loaderPaths, goingPaks);
+    }
+
+    private PreparedChange SetAside(InstallState state, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader = false)
+    {
+        var copy = Layout(state.Game);
+        var (ovsPaths, mvsiPaths, staying, loaderPaths, goingPaks) = WhatGoes(state, copy, openVersus, mvsInfinite, others, onlyOurLoader);
+        var going = new HashSet<string>(ovsPaths.Concat(mvsiPaths).Concat(others), StringComparer.Ordinal);
 
         var summary = new List<string>();
         string? refused = null;
@@ -415,7 +608,7 @@ public sealed class GameStates
         log.LogInformation("Set aside prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
 
         var removed = ovsPaths.Concat(mvsiPaths).Concat(others).Concat(loaderPaths).Distinct(StringComparer.Ordinal).ToList();
-        return new PreparedChange(summary, null, refused, () => Change(state.Game, "before a clean start", "Set aside", refused,
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before a clean start", "Set aside", refused,
             (_, live) => live.Where(p => !((openVersus && p.Home == null) || (mvsInfinite && p.Home != null))).Select(p => p.InPlace).ToList(),
             (store, _, before) => store.Edit(before, removed.Select(p => (TreeEdit)new Removal(p))),
             (store, before) =>
@@ -452,7 +645,7 @@ public sealed class GameStates
         if (lastTree == null || !store.Has(lastTree, copy.Prefix + Home.TrimEnd('/')))
         {
             string nothing = $"Nothing of OpenVersus {channel} is kept for this copy of the game.";
-            return new PreparedChange([nothing], null, nothing, () => throw new ChangeException(nothing));
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
         }
         var (message, at) = store.Describe(last!);
         var found = Find(state, copy, PaksIn(message).Where(p => p.Home == null), progress, out string? refused);
@@ -466,7 +659,7 @@ public sealed class GameStates
         }
         summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home)).Concat(LivePaths(state, copy).Where(p => p.Home != null))));
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
-        return new PreparedChange(summary, null, refused, () => Change(state.Game, $"before OpenVersus {channel} was turned on", $"OpenVersus {channel}, turned on", refused,
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, $"before OpenVersus {channel} was turned on", $"OpenVersus {channel}, turned on", refused,
             (_, live) => [.. found, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
             (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned)))));
     }
@@ -489,13 +682,15 @@ public sealed class GameStates
         var copy = Layout(state.Game);
         string branch = kind == SetAsideKind.MvsInfinite ? MvsInfiniteBranch : CleanStartBranch;
         string what = kind == SetAsideKind.MvsInfinite ? "MVS Infinite" : "What a clean start set aside";
+        // Mid-sentence, as an undo quotes it.
+        string phrase = kind == SetAsideKind.MvsInfinite ? what : "what a clean start set aside";
         string? tip = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(branch) : null;
         var store = Open(copy);
         var wanted = kind == SetAsideKind.MvsInfinite ? paks.Read(MvsInfinitePaks) : [];
         if (tip == null && wanted.Count == 0)
         {
-            string nothing = $"Nothing is set aside as {what} for this copy of the game.";
-            return new PreparedChange([nothing], null, nothing, () => throw new ChangeException(nothing));
+            string nothing = $"Nothing is set aside as {phrase} for this copy of the game.";
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
         }
         string? tree = tip == null ? null : store.TreeOf(tip);
         var paths = tree == null ? [] : store.Paths(tree);
@@ -503,7 +698,7 @@ public sealed class GameStates
         var summary = new List<string> { $"{what}: {paths.Count} {Files(paths.Count)}{(found.Count > 0 ? $" and {found.Count} {Paks(found.Count)}" : "")} go back where they were." };
         summary.Add("Undo sets them aside again.");
         // Safe to forget the state once they are back: the files are then tracked by the live state, so undo's snapshot has them.
-        return new PreparedChange(summary, null, refused, () => Change(state.Game, $"before {what} was put back", $"{what}, put back", refused,
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, $"before {phrase} was put back", $"{what}, put back", refused,
             (_, live) => [.. live.Select(p => p.InPlace), .. found],
             (store, _, before) => tree == null ? before : store.Edit(before, Grafts(store, tree, paths)),
             (store, _) => store.DeleteBranch(branch),
@@ -585,7 +780,7 @@ public sealed class GameStates
     // paks the target has, from the read made now and the paks live with it. after: what the change keeps once it is made
     // (a branch of what it set aside, from the state before). extraRoots: paths the snapshot must hold besides the usual
     // ones, so that undo puts them back.
-    private void Change(GameInstall game, string beforeWhat, string title, string? refused,
+    private void Change(IProgress<string>? progress, GameInstall game, string beforeWhat, string title, string? refused,
         Func<InstallState, IReadOnlyList<LivePak>, IReadOnlyList<StagedPak>> paksAfter, Func<GitStore, InstallState, string, string> target,
         Action<GitStore, string>? after = null, IEnumerable<string>? extraRoots = null, bool restoresSets = false)
     {
@@ -606,12 +801,14 @@ public sealed class GameStates
             Directory.CreateDirectory(copy.WorkTree);
         }
         var clock = System.Diagnostics.Stopwatch.StartNew();
+        progress?.Report("Reading the game's folder...");
         var now = installs.Read(game);
         var live = LivePaks(now, copy);
         var store = Open(copy);
         var sets = SetBranches.ToDictionary(b => b, store.Tip);
         var previousSets = SetBranches.ToDictionary(b => b, b => store.Tip(PreviousOf + b));
         log.LogInformation("{Title}: read in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        progress?.Report("Saving what is there now, for undo...");
         string before = store.Snapshot(Roots(now, copy).Concat(extraRoots ?? []), Message(beforeWhat, live));
         string beforeTree = store.TreeOf(before);
         if (now.Channel is { } channel)
@@ -619,6 +816,7 @@ public sealed class GameStates
             store.SetBranch(ReleaseCache.BranchOf(channel.Channel), before);
         }
         log.LogInformation("{Title}: snapshot in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        progress?.Report("Checking that nothing is in the way...");
         string targetTree = target(store, now, beforeTree);
         log.LogInformation("{Title}: target in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
 
@@ -637,9 +835,11 @@ public sealed class GameStates
         }
         pakPlan.Check();
         log.LogInformation("{Title}: checked in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        progress?.Report("Changing the game's files...");
 
         store.Switch(targetTree, title);
         log.LogInformation("{Title}: switched in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        progress?.Report("Moving the paks...");
         try
         {
             pakPlan.Apply();
@@ -668,6 +868,7 @@ public sealed class GameStates
                 Point(store, set.Key, set.Value);
             }
         }
+        progress?.Report("Tidying up the buddy's folder...");
         after?.Invoke(store, beforeTree);
         store.Prune();
         log.LogInformation("{Title}: done for {Folder} in {Seconds:F1} s", title, copy.WorkTree, clock.Elapsed.TotalSeconds);

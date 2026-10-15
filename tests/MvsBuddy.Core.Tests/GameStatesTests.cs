@@ -642,4 +642,186 @@ public sealed class GameStatesTests : IDisposable
         install.Apply();
         Assert.True(buddy.States.CanUndo(Game()));
     }
+
+    [Fact]
+    public void The_person_can_say_which_channel_a_copy_is_and_the_next_change_files_it_there()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+
+        buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+        var said = buddy.Installs.Read(Game());
+        Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Person), said.Channel);
+        buddy.States.PrepareSetChannel(said, Channel.Testing).Apply();
+        Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Person), buddy.Installs.Read(Game()).Channel);
+        Assert.Equal(Channel.Prod, said.Record!.ChannelValue);
+        Assert.False(buddy.States.CanUndo(Game()));
+
+        // The guess was Testing; said Prod, the turn-off keeps it as Prod.
+        buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Prod)], buddy.States.SetAsideOf(buddy.Installs.Read(Game())).Select(a => (a.Kind, a.Channel)));
+    }
+
+    private void InstallId(string id) => File.WriteAllText(Path.Combine(Home, "OVSState.toml"), $"[Identity]\nInstallId = \"{id}\"\n");
+
+    private IEnumerable<(SetAsideKind, Channel?)> Kept(Buddy buddy) => buddy.States.SetAsideOf(buddy.Installs.Read(Game())).Select(a => (a.Kind, a.Channel));
+
+    [Theory]
+    [InlineData("p1")]
+    [InlineData(null)]
+    public async Task Saying_the_channel_after_a_change_drops_this_same_install_filed_under_the_old_one(string? id)
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        if (id != null)
+        {
+            InstallId(id);
+        }
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+
+        var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Contains("What the buddy kept as OpenVersus Prod is this same install, so it is not kept as Prod any more.", said.Summary);
+        said.Apply();
+
+        Assert.Empty(Kept(buddy));
+        // Its paks stay where the turn-on left them, and undo still has its own.
+        Assert.Equal(["OVS_P.pak"], Directory.EnumerateFiles(SavedPaks).Select(Path.GetFileName));
+        Assert.True(buddy.States.CanUndo(Game()));
+    }
+
+    [Fact]
+    public async Task Saying_the_channel_keeps_another_install_filed_under_the_old_one()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        InstallId("p1");
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+        // Since then, another install of the mod here: a new identity.
+        InstallId("p2");
+
+        var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Equal(["The buddy counts this copy's OpenVersus as Testing from now on."], said.Summary);
+        said.Apply();
+
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Prod)], Kept(buddy));
+    }
+
+    [Fact]
+    public async Task A_loader_already_in_place_as_the_same_build_stays_the_persons_through_turn_off_and_uninstall()
+    {
+        Game();
+        string loader = tree.Bytes(LoaderDll, [.. Rel(Win64), "version.dll"]);
+        var buddy = Buddy();
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }));
+        Assert.Contains(install.Summary, s => s.EndsWith(" is already in place as version.dll.", StringComparison.Ordinal));
+        install.Apply();
+        Assert.Null(buddy.Installs.Read(Game()).Record!.Loader);
+
+        var off = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
+        Assert.Contains("Ultimate ASI Loader stays: the buddy did not put it there.", off.Summary);
+        off.Apply();
+        Assert.True(File.Exists(loader));
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing).Apply();
+
+        var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
+        Assert.Contains("Ultimate ASI Loader stays: the buddy did not put it there.", uninstall.Summary);
+        uninstall.Apply();
+        Assert.True(File.Exists(loader));
+    }
+
+    [Fact]
+    public async Task Uninstall_deletes_the_mod_its_paks_and_every_kept_channel_and_leaves_nothing_to_undo()
+    {
+        Game();
+        var buddy = Buddy();
+        var bare = Everything();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+
+        var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
+        Assert.Null(uninstall.Refused);
+        Assert.Equal([
+            "Deletes OpenVersus 2026.10.14.01 (Prod) from the game's folder.",
+            "Deletes its pak.",
+            "Deletes OpenVersus Testing, kept for this copy, with its saved state and its paks.",
+            "Deletes Ultimate ASI Loader too: the buddy put it there, and no plugin is left to load through it.",
+            "There is no undo for this: to have OpenVersus again, install it.",
+        ], uninstall.Summary);
+        uninstall.Apply();
+
+        Assert.Equal(bare, Everything());
+        Assert.False(Directory.Exists(Home));
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+        Assert.False(buddy.States.CanUndo(Game()));
+        Assert.All(new[] { "prod", "testing", "other" }, set => Assert.False(Directory.Exists(tree.Path("data", "paks", set))));
+    }
+
+    [Fact]
+    public void Uninstall_leaves_a_loader_the_buddy_did_not_place_and_the_mods_logs()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+
+        var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
+        Assert.Contains("Ultimate ASI Loader stays: the buddy did not put it there.", uninstall.Summary);
+        Assert.Contains("The mod's logs stay in plugins/OpenVersus/logs: the buddy never touches them.", uninstall.Summary);
+        uninstall.Apply();
+
+        Assert.Equal(["a log"], Directory.EnumerateFiles(Home, "*", SearchOption.AllDirectories).Select(Read));
+        Assert.True(File.Exists(Path.Combine(Win64, "version.dll")));
+        Assert.Empty(Directory.EnumerateFiles(SavedPaks));
+        Assert.Equal(InstallStatus.LoaderOnly, buddy.Installs.Read(Game()).Status);
+        Assert.False(buddy.States.CanUndo(Game()));
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+        Assert.False(Directory.Exists(tree.Path("data", "paks", "testing")));
+    }
+
+    [Fact]
+    public void Uninstall_without_a_known_prefix_says_the_paks_stay_and_leaves_them()
+    {
+        Season1Installed();
+        string stray = tree.File("stray", [.. Rel(Root), "MultiVersus", "Content", "Paks", "~mods", "OVS_Audio_P.pak"]);
+        var buddy = Buddy();
+        var noPrefix = Game() with { WinePrefix = null };
+        var state = buddy.Installs.Read(noPrefix);
+        Assert.Null(state.SavedPaksDirectory);
+
+        var uninstall = buddy.States.PrepareUninstall(state);
+        Assert.DoesNotContain(uninstall.Summary, s => s.StartsWith("Deletes its", StringComparison.Ordinal));
+        Assert.Contains("Its paks stay where they are: the buddy cannot tell which Wine prefix this copy runs in.", uninstall.Summary);
+        uninstall.Apply();
+
+        Assert.Equal("stray", Read(stray));
+        Assert.Equal("pak 12", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task Uninstall_after_turning_off_deletes_what_is_kept_and_changes_nothing_in_the_game()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+        tree.File("mvsi asi", [.. Rel(Win64), "plugins", "MVSIASI.asi"]);
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        var off = Everything();
+
+        var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
+        Assert.Equal([
+            "Deletes OpenVersus Testing, kept for this copy, with its saved state and its paks.",
+            "Ultimate ASI Loader stays: MVSIASI.asi still loads through it.",
+            "There is no undo for this: to have OpenVersus again, install it.",
+        ], uninstall.Summary);
+        uninstall.Apply();
+
+        Assert.Equal(off, Everything());
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+        Assert.False(buddy.States.CanUndo(Game()));
+        Assert.False(Directory.Exists(tree.Path("data", "paks", "testing")));
+        Assert.NotNull(buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Refused);
+    }
 }

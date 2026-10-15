@@ -38,16 +38,4 @@ public sealed class ChannelTests
     {
         Assert.Null(InstallReader.ChannelOf(Mod("http://prod.openversus.org:8420/", ModLayout.None), new InstallRecord { Channel = "Prod" }));
     }
-
-    [Theory]
-    [InlineData("OpenVersus", true)]
-    [InlineData("OpenVersus Prod", true)]
-    [InlineData("OpenVersus Testing", true)]
-    [InlineData("MVS Infinite", false)]
-    [InlineData("Before 2026.10.13.01 2026-10-14 101500", false)]
-    [InlineData("Uninstalled 2026-10-14 101500", false)]
-    public void Openversus_held_under_either_channel_or_the_older_plain_name_counts_as_turned_off(string set, bool openVersus)
-    {
-        Assert.Equal(openVersus, InstallChanges.IsOpenVersusSet(set));
-    }
 }

@@ -32,11 +32,9 @@ internal sealed class MainScreen
     private bool otherVersions;
     private bool onGame;
     private string? cleanStartUnavailable;
+    private IReadOnlyList<SetAside> kept = [];
+    private bool canUndo;
     private bool picking;
-    private readonly HashSet<ChangePlan> logged = [];
-
-    // Steps a confirm screen lists before pointing at the log for the rest: a clean start can move tens of thousands.
-    private const int StepsShown = 200;
 
     public MainScreen(RmlWindow window, UiThread ui, Buddy buddy, string version, ILogger log)
     {
@@ -291,15 +289,15 @@ internal sealed class MainScreen
     private void Reload()
     {
         var copy = game!;
-        logged.Clear();
         Show(Working("Reading what is installed..."));
+        // What is kept and whether there is an undo are read here, once: both open the copy's store.
         ui.Run(() =>
         {
             var read = buddy.Installs.Read(copy);
-            return Task.FromResult((read, buddy.Stock.Unavailable(read)));
+            return Task.FromResult((read, buddy.Stock.Unavailable(read), buddy.States.SetAsideOf(read), buddy.States.CanUndo(copy)));
         }, read =>
         {
-            (state, cleanStartUnavailable) = read;
+            (state, cleanStartUnavailable, kept, canUndo) = read;
             ShowGame();
         }, Failed);
     }
@@ -324,34 +322,25 @@ internal sealed class MainScreen
         rml.Append(Message());
 
         rml.Append("<div class=\"actions\">");
-        if (s.Status == InstallStatus.Installed || s.Status == InstallStatus.LoaderMissing)
+        if (s.Mod.Layout != ModLayout.None)
         {
-            rml.Append(Button("Turn OpenVersus off", () => Confirm("Turn OpenVersus off?",
-                "Its files and paks are set aside in the buddy's own folder, and so is the loader if the buddy installed it and no "
-                + "other ASI plugin loads through it; the game runs without them until you turn it back on.",
-                buddy.Changes.HoldOpenVersus(s), "OpenVersus is off.")));
+            rml.Append(Button("Turn OpenVersus off", () => Prepare("Turn OpenVersus off?", _ => buddy.States.PrepareTurnOff(s), "OpenVersus is off.")));
         }
-        if (s.Status == InstallStatus.Disabled)
+        else
         {
-            foreach (var held in s.Held.Where(h => h.IsRecorded && InstallChanges.IsOpenVersusSet(h.Name)))
+            foreach (var channel in KeptChannels())
             {
-                string name = held.Name;
-                rml.Append(Button($"Turn {name} on", () => Confirm($"Turn {name} on?", "Puts back the files that were set aside.",
-                    buddy.Changes.Restore(s, name), $"{name} is on."), "primary"));
+                rml.Append(Button($"Turn OpenVersus {channel} on", () => Prepare($"Turn OpenVersus {channel} on?",
+                    progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
             }
         }
-        if (s.Held.Where(h => h.IsRecorded && h.Placed.Count > 0).OrderByDescending(h => h.HeldAt).FirstOrDefault() is { } undo)
+        if (canUndo)
         {
-            rml.Append(Button("Undo the last install", () => Confirm("Undo the last install?",
-                $"Puts this copy back the way it was before that install ({undo.Name}): the files it added are deleted, and "
-                + "so are any changes made to its settings file since.",
-                buddy.Changes.Restore(s, undo.Name), "The install was undone.")));
+            rml.Append(Button("Undo the last change", () => Prepare("Undo the last change?", progress => buddy.States.PrepareUndo(s, progress), "The last change was undone.")));
         }
-        if (s.Status != InstallStatus.NotInstalled && s.Status != InstallStatus.Disabled)
+        if (s.Mod.Layout != ModLayout.None || KeptChannels().Any() || s.Paks.Count + s.PaksInGame.Count > 0)
         {
-            rml.Append(Button("Uninstall", () => Confirm("Uninstall OpenVersus?",
-                "Takes OpenVersus out: its files, its paks and the loader are set aside in the buddy's own folder as one set, "
-                + "which can be put back.", buddy.Installer.Uninstall(s), "OpenVersus was uninstalled.")));
+            rml.Append(Button("Uninstall", () => Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(s), "OpenVersus was uninstalled.")));
         }
         rml.Append(Button("Check again", () =>
         {
@@ -367,7 +356,7 @@ internal sealed class MainScreen
         rml.Append("</div>");
         rml.Append(InstallSection(s));
         rml.Append(CleanStartSection());
-        rml.Append(HeldSection(s));
+        rml.Append(KeptSection(s));
 
         if (s.Notes.Count > 0)
         {
@@ -491,93 +480,40 @@ internal sealed class MainScreen
                 Render();
             }
         });
-        ui.Run(() => buddy.Installer.PrepareAsync(s, release, null, progress, stop.Token), prepared => ConfirmInstall(prepared), e =>
-        {
-            if (e is OperationCanceledException)
-            {
-                message = ("The install was cancelled; nothing was changed.", false);
-                ShowGame();
-            }
-            else if (e is ChangeException || e is DownloadException || e is ReleaseCatalogException)
-            {
-                message = (e.Message, true);
-                ShowGame();
-            }
-            else
-            {
-                Failed(e);
-            }
-        });
+        string tag = release.Tag;
+        ui.Run(() => buddy.States.PrepareInstallAsync(s, release, null, progress, stop.Token),
+            prepared => Confirm($"Install {tag}?", prepared, $"OpenVersus {tag} is installed.", "Install"),
+            e => NotReady(e, "The install was cancelled; nothing was changed."));
     }
 
-    private void ConfirmInstall(PreparedInstall prepared, bool showFiles = false)
+    // A change that could not be got ready: said on the game's screen, unless it is something unexpected.
+    private void NotReady(Exception e, string cancelled = "Cancelled; nothing was changed.")
     {
-        actions.Clear();
-        string tag = prepared.Release.Tag;
-        var rml = new StringBuilder($"<h2>Install {Html.Text(tag)}?</h2><ul>");
-        foreach (string line in prepared.Summary)
+        if (e is OperationCanceledException)
         {
-            rml.Append($"<li>{Html.Text(line)}</li>");
+            message = (cancelled, false);
+            ShowGame();
         }
-        rml.Append("</ul>");
-        rml.Append($"<div class=\"actions\">{Button("Install", () => Apply(prepared.Plan, $"OpenVersus {tag} is installed."), "primary")}{Button("Cancel", ShowGame)}</div>");
-        rml.Append(Files(prepared.Plan, showFiles, () => ConfirmInstall(prepared, showFiles: true)));
-        Show(rml.ToString());
-    }
-
-    // How many files a plan moves, and the list of its steps when asked for: the first few hundred, and the rest in the log.
-    private string Files(ChangePlan plan, bool show, Action showThem)
-    {
-        var steps = plan.Steps;
-        int files = steps.Count(s => s.StartsWith("Move ", StringComparison.Ordinal));
-        var rml = new StringBuilder($"<p class=\"muted\">{files:N0} {(files == 1 ? "file is" : "files are")} moved.</p>");
-        if (!show)
+        else if (e is ChangeException || e is DownloadException || e is ReleaseCatalogException)
         {
-            return rml.Append(Button("Show the files", showThem, "small")).ToString();
+            message = (e.Message, true);
+            ShowGame();
         }
-        rml.Append("<div class=\"steps\">");
-        foreach (string step in steps.Take(StepsShown))
+        else
         {
-            rml.Append($"<p>{Html.Text(Shorten(step))}</p>");
-        }
-        if (steps.Count <= StepsShown)
-        {
-            return rml.Append("</div>").ToString();
-        }
-        rml.Append($"<p>...and {steps.Count - StepsShown:N0} more.</p></div>");
-        if (logged.Add(plan))
-        {
-            ui.Run(() =>
-            {
-                log.LogInformation("Planned, not done yet ({Count} steps):{NewLine}{Steps}", steps.Count, Environment.NewLine, string.Join(Environment.NewLine, steps));
-                return Task.FromResult(true);
-            }, _ => { }, Failed);
-        }
-        return rml.Append("<p class=\"muted\">Every step is in the buddy's log:</p>")
-            .Append($"<p class=\"path\">{Html.Text(LogFile)}</p>").Append(Button("Open the log", OpenLog, "small")).ToString();
-    }
-
-    // Today's log; Program names it the same way.
-    private static string LogFile => Path.Combine(BuddyBuilder.DefaultDataDirectory, "logs", $"mvs-buddy-{DateTime.Now:yyyyMMdd}.log");
-
-    private void OpenLog()
-    {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(LogFile) { UseShellExecute = true })?.Dispose();
-        }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception || e is InvalidOperationException || e is IOException)
-        {
-            log.LogWarning(e, "Could not open {Log}", LogFile);
+            Failed(e);
         }
     }
 
-    private static string Status(InstallState s) => s.Status switch
+    // OpenVersus of a channel that is kept for this copy and not live now: turning it on brings it back as it was.
+    private IEnumerable<Channel> KeptChannels() => kept.Where(k => k.Kind == SetAsideKind.OpenVersus).Select(k => k.Channel!.Value);
+
+    private string Status(InstallState s) => s.Status switch
     {
         InstallStatus.Installed => $"OpenVersus {Version(s)}{ChannelName(s)} is installed.",
-        InstallStatus.Disabled => "OpenVersus is turned off.",
-        InstallStatus.LoaderOnly => "OpenVersus is not installed; only its loader is here.",
         InstallStatus.LoaderMissing => $"OpenVersus {Version(s)}{ChannelName(s)} is here, but the loader it needs is missing.",
+        _ when KeptChannels().Any() => "OpenVersus is turned off.",
+        InstallStatus.LoaderOnly => "OpenVersus is not installed; only its loader is here.",
         _ => "OpenVersus is not installed.",
     };
 
@@ -600,9 +536,28 @@ internal sealed class MainScreen
         if (s.Mod.Layout == ModLayout.Current)
         {
             var other = c.Channel == Channel.Prod ? Channel.Testing : Channel.Prod;
-            rml.Append(Button($"It's {other}", () => Apply(buddy.Changes.SetChannel(s, other), $"The buddy counts this copy as {other} now."), "small"));
+            rml.Append(Button($"It's {other}", () => SayChannel(s, other), "small"));
         }
         return rml.Append("</p>").ToString();
+    }
+
+    // The person saying which channel this copy is: done at once, unless it also changes what is kept, which is asked first.
+    private void SayChannel(InstallState s, Channel channel)
+    {
+        message = null;
+        string done = $"The buddy counts this copy as {channel} now.";
+        Show(Working("Getting it ready..."));
+        ui.Run(() => Task.FromResult(buddy.States.PrepareSetChannel(s, channel)), change =>
+        {
+            if (change.Summary.Count > 1)
+            {
+                Confirm($"Count this copy as {channel}?", change, done);
+            }
+            else
+            {
+                Apply(change, done);
+            }
+        }, e => NotReady(e));
     }
 
     private static string Version(InstallState s) => s.Mod.Version is { } v ? Catalog.ModVersion.Text(v) : "";
@@ -690,8 +645,8 @@ internal sealed class MainScreen
         rml.Append("<div class=\"actions\">");
         if (setAside.Any(k => kinds.Any(x => x.Item1 == k)))
         {
-            rml.Append(Button("Continue", () => ConfirmCleanStart(buddy.Changes.CleanStart(s,
-                report.Extras.Where(e => setAside.Contains(e.Kind) || e.Kind == ExtraKind.Loader))), "primary"));
+            var picked = report.Extras.Where(e => setAside.Contains(e.Kind)).ToList();
+            rml.Append(Button("Continue", () => Prepare("Clean start?", _ => buddy.States.PrepareSetAside(s, picked), "The clean start is done."), "primary"));
         }
         else
         {
@@ -701,47 +656,69 @@ internal sealed class MainScreen
         Show(rml.ToString());
     }
 
-    private void ConfirmCleanStart(CleanStartPlan clean, bool showFiles = false)
+    // What is kept for this copy: OpenVersus of a channel not live now, which turns on as it was, and what clean starts set
+    // aside, which goes back where it was. Each can be deleted for good.
+    private string KeptSection(InstallState s)
     {
-        actions.Clear();
-        var rml = new StringBuilder("<h2>Clean start?</h2><ul>");
-        foreach (string line in clean.Summary)
+        var rml = new StringBuilder();
+        var channels = kept.Where(k => k.Kind == SetAsideKind.OpenVersus).ToList();
+        if (channels.Count > 0)
         {
-            rml.Append($"<li>{Html.Text(line)}</li>");
+            rml.Append("<h3>Kept</h3>");
         }
-        rml.Append("</ul><p>Each set can be put back from the game's screen, under \"Set aside\".</p>");
-        rml.Append($"<div class=\"actions\">{Button("Go ahead", () => Apply(clean.Plan, "The clean start is done."), "primary")}{Button("Cancel", ShowGame)}</div>");
-        rml.Append(Files(clean.Plan, showFiles, () => ConfirmCleanStart(clean, showFiles: true)));
-        Show(rml.ToString());
-    }
-
-    // Sets the buddy holds aside, apart from what undoes an install: each can be put back or deleted for good.
-    private string HeldSection(InstallState s)
-    {
-        // A hold that did not finish is only told about (Notes): which of its files are the only copies is not known.
-        var sets = s.Held.Where(h => h.IsRecorded && h.Placed.Count == 0).ToList();
-        if (sets.Count == 0)
+        foreach (var k in channels)
         {
-            return "";
-        }
-        var rml = new StringBuilder("<h3>Set aside</h3>");
-        foreach (var held in sets)
-        {
-            string name = held.Name;
-            int count = held.Entries.Count(e => e.IsHeld);
-            rml.Append($"<div class=\"release\"><span class=\"strong\">{Html.Text(name)}</span> <span class=\"muted\">{held.HeldAt:yyyy-MM-dd}, "
-                + $"{count:N0} {(count == 1 ? "file" : "files")}</span> ");
-            // OpenVersus has its own "turn on" above.
-            if (!InstallChanges.IsOpenVersusSet(name))
+            var channel = k.Channel!.Value;
+            string name = $"OpenVersus {channel}";
+            rml.Append($"<div class=\"release\"><span class=\"strong\">{Html.Text(name)}</span> <span class=\"muted\">as it was on {k.At.LocalDateTime:yyyy-MM-dd}</span> ");
+            // With OpenVersus off, its "turn on" is above.
+            if (s.Mod.Layout != ModLayout.None)
             {
-                rml.Append(Button("Put back", () => Confirm($"Put {name} back?", "Puts every file of the set back where it was.",
-                    buddy.Changes.Restore(s, name), $"{name} is back."), "small"));
+                rml.Append(Button("Turn on", () => Prepare($"Turn {name} on?", progress => buddy.States.PrepareTurnOn(s, channel, progress), $"{name} is on."), "small"));
             }
-            rml.Append(Button("Delete for good", () => Confirm($"Delete {name} for good?",
-                $"Deletes the {count:N0} {(count == 1 ? "file" : "files")} held as {name} from the buddy's folder. They cannot be put back after this.",
-                buddy.Changes.Discard(s, name), $"{name} was deleted."), "small")).Append("</div>");
+            rml.Append(Button("Delete for good", () => ConfirmDiscard(name,
+                $"Its saved state and its paks are deleted from the buddy's folder. Installing {channel} again downloads its paks, and it starts with a new saved state.",
+                $"{name} was deleted.", () => buddy.States.Discard(s.Game, SetAsideKind.OpenVersus, channel)), "small")).Append("</div>");
+        }
+        var sets = kept.Where(k => k.Kind != SetAsideKind.OpenVersus).ToList();
+        if (sets.Count > 0)
+        {
+            rml.Append("<h3>Set aside</h3>");
+        }
+        foreach (var k in sets)
+        {
+            var kind = k.Kind;
+            bool mvsi = kind == SetAsideKind.MvsInfinite;
+            string name = mvsi ? "MVS Infinite" : "What a clean start set aside";
+            string files = $"{k.Files:N0} {(k.Files == 1 ? "file" : "files")}";
+            rml.Append($"<div class=\"release\"><span class=\"strong\">{Html.Text(name)}</span> <span class=\"muted\">"
+                + (k.At > DateTimeOffset.MinValue ? $"{k.At.LocalDateTime:yyyy-MM-dd}, " : "") + $"{files}, {Size(k.Bytes)}</span> ");
+            rml.Append(Button("Put back", () => Prepare(mvsi ? "Put MVS Infinite back?" : "Put back what a clean start set aside?",
+                progress => buddy.States.PreparePutBack(s, kind, progress), $"{name} is back."), "small"));
+            rml.Append(Button("Delete for good", () => ConfirmDiscard(mvsi ? "MVS Infinite" : "what a clean start set aside",
+                $"Its {files} ({Size(k.Bytes)}) {(k.Files == 1 ? "is" : "are")} deleted from the buddy's folder: Put back cannot bring them back after this.",
+                $"{name} was deleted.", () => buddy.States.Discard(s.Game, kind)), "small")).Append("</div>");
         }
         return rml.ToString();
+    }
+
+    private void ConfirmDiscard(string what, string sentence, string done, Action discard)
+    {
+        actions.Clear();
+        Show($"<h2>Delete {Html.Text(what)} for good?</h2><p>{Html.Text(sentence)}</p><div class=\"actions\">"
+            + Button("Delete for good", () =>
+            {
+                Show(Working("Deleting..."));
+                ui.Run(() =>
+                {
+                    discard();
+                    return Task.FromResult(true);
+                }, _ =>
+                {
+                    message = (done, false);
+                    Reload();
+                }, Failed);
+            }, "primary") + Button("Cancel", ShowGame) + "</div>");
     }
 
     private static string Size(long bytes) => bytes switch
@@ -754,55 +731,100 @@ internal sealed class MainScreen
 
     // Changes ----------------------------------------------------------------------------------------------------------
 
-    private void Confirm(string title, string sentence, ChangePlan plan, string done, bool showFiles = false)
+    // Gets a change ready off this thread (it reads the game's folder and the copy's store, and may checksum paks), then
+    // asks before making it.
+    private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done)
+    {
+        message = null;
+        string line = "Getting it ready...";
+        bool waiting = true;
+        void Render()
+        {
+            actions.Clear();
+            Show($"<h2>{Html.Text(title)}</h2><p class=\"working\">{Html.Text(line)}</p><p class=\"muted\">Nothing in the game changes until you say so.</p>");
+        }
+        Render();
+        var progress = new Lines(ui, text =>
+        {
+            line = text;
+            if (waiting)
+            {
+                Render();
+            }
+        });
+        ui.Run(() => Task.FromResult(prepare(progress)), change =>
+        {
+            waiting = false;
+            Confirm(title, change, done);
+        }, e =>
+        {
+            waiting = false;
+            NotReady(e);
+        });
+    }
+
+    // What a change will do, as the change itself says, and the go-ahead; a change that cannot be made says why instead.
+    private void Confirm(string title, PreparedChange change, string done, string go = "Go ahead")
     {
         actions.Clear();
-        var rml = new System.Text.StringBuilder();
-        rml.Append($"<h2>{Html.Text(title)}</h2><p>{Html.Text(sentence)}</p>");
-        rml.Append($"<div class=\"actions\">{Button("Go ahead", () => Apply(plan, done), "primary")}{Button("Cancel", ShowGame)}</div>");
-        rml.Append(Files(plan, showFiles, () => Confirm(title, sentence, plan, done, showFiles: true)));
+        var rml = new StringBuilder($"<h2>{Html.Text(title)}</h2><ul>");
+        foreach (string line in change.Summary)
+        {
+            rml.Append($"<li>{Html.Text(line)}</li>");
+        }
+        rml.Append("</ul>");
+        if (change.Refused is string why)
+        {
+            if (!change.Summary.Contains(why))
+            {
+                rml.Append($"<p class=\"bad\">{Html.Text(why)}</p>");
+            }
+            rml.Append($"<div class=\"actions\">{Button("Back", ShowGame)}</div>");
+        }
+        else
+        {
+            rml.Append($"<div class=\"actions\">{Button(go, () => Apply(change, done), "primary")}{Button("Cancel", ShowGame)}</div>");
+        }
         Show(rml.ToString());
     }
 
-    // A step with its long folders named instead: the game's folder, where the paks go, and the buddy's own.
-    private string Shorten(string step)
+    private void Apply(PreparedChange change, string done)
     {
-        var roots = new List<(string Folder, string Name)> { (BuddyBuilder.DefaultDataDirectory, "buddy's folder") };
-        if (state?.SavedPaksDirectory is string paks)
+        string line = "Working...";
+        bool working = true;
+        void Render()
         {
-            roots.Add((paks, "paks folder"));
+            actions.Clear();
+            Show($"<p class=\"working\">{Html.Text(line)}</p><p class=\"muted\">Leave the window open until this is done.</p>");
         }
-        if (game != null)
+        Render();
+        var progress = new Lines(ui, text =>
         {
-            roots.Add((GameFolder(game), "game folder"));
-        }
-        foreach (var (folder, name) in roots.OrderByDescending(r => r.Folder.Length))
-        {
-            step = step.Replace(folder + Path.DirectorySeparatorChar, name + " \u203a ", StringComparison.Ordinal);
-        }
-        return step;
-    }
-
-    private void Apply(ChangePlan plan, string done)
-    {
-        Show(Working("Working... Leave the window open until this is done."));
+            line = text;
+            if (working)
+            {
+                Render();
+            }
+        });
         ui.Run(() =>
         {
-            plan.Apply();
+            change.Apply(progress);
             return Task.FromResult(true);
         }, _ =>
         {
+            working = false;
             message = (done, false);
             Reload();
         }, e =>
         {
+            working = false;
             if (e is ChangeException { DeniedFolders.Count: > 0 } denied && buddy.Permissions.CanAsk)
             {
-                ShowDenied(denied, plan, done);
+                ShowDenied(denied, change, done);
             }
-            else if (e is ChangeException change)
+            else if (e is ChangeException refused)
             {
-                message = (change.Message, true);
+                message = (refused.Message, true);
                 Reload();
             }
             else
@@ -813,22 +835,22 @@ internal sealed class MainScreen
     }
 
     // Windows refused the change in some folders: ask for exactly those, then make the same change again.
-    private void ShowDenied(ChangeException denied, ChangePlan plan, string done)
+    private void ShowDenied(ChangeException denied, PreparedChange change, string done)
     {
         actions.Clear();
         Show($"<p class=\"message bad\">{Html.Text(denied.Message)}</p>"
             + "<p>Windows can allow this account to change files there. It asks an administrator once, then the buddy does this again.</p>"
-            + $"<div class=\"actions\">{Button("Allow and try again", () => Allow(denied.DeniedFolders, plan, done), "primary")}{Button("Cancel", Reload)}</div>");
+            + $"<div class=\"actions\">{Button("Allow and try again", () => Allow(denied.DeniedFolders, change, done), "primary")}{Button("Cancel", Reload)}</div>");
     }
 
-    private void Allow(IReadOnlyList<string> folders, ChangePlan plan, string done)
+    private void Allow(IReadOnlyList<string> folders, PreparedChange change, string done)
     {
         Show(Working("Asking Windows for permission... Answer the prompt Windows shows."));
         ui.Run(() => buddy.Permissions.AskAsync(folders), result =>
         {
             if (result.Outcome == PermissionOutcome.Granted)
             {
-                Apply(plan, done);
+                Apply(change, done);
                 return;
             }
             message = (result.Message, true);

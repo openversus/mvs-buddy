@@ -20,7 +20,7 @@ internal sealed class HostSystem
     /// <summary>
     /// The buddy's own folder in the user's profile: <c>%LOCALAPPDATA%\mvs-buddy</c> on Windows,
     /// <c>$XDG_DATA_HOME/mvs-buddy</c> (by default <c>~/.local/share/mvs-buddy</c>) on Linux. Nothing the game or Ultimate
-    /// ASI Loader reads is ever under it, which is why held files go there.
+    /// ASI Loader reads is ever under it, which is why the states and the pak sets are kept there.
     /// </summary>
     internal string DataDirectory { get; init; } = "";
 

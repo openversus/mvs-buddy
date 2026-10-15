@@ -137,15 +137,6 @@ public sealed class InstallReader
         {
             notes.Add($"This account is not allowed to change files in {string.Join(", ", denied)}.");
         }
-        var held = new Changes.HeldArea(host).Read(game);
-        foreach (var set in held)
-        {
-            notes.Add(!set.IsRecorded
-                ? $"Files from a hold that did not finish are in {set.Folder}; the originals were never moved away, so these can be discarded."
-                : set.Placed.Count > 0
-                    ? $"{set.Name} can be restored to undo that install ({set.Entries.Count(e => e.IsHeld)} files kept from before it)."
-                    : $"{set.Name} is held aside ({set.Entries.Count(e => e.IsHeld)} files); restore it to use it again.");
-        }
 
         var state = new InstallState
         {
@@ -157,7 +148,6 @@ public sealed class InstallReader
             PaksInGame = paksInGame,
             OtherPaks = otherPaks,
             OtherPlugins = others,
-            Held = held,
             DeniedFolders = denied,
             NeedsFirstLaunch = notStarted,
             Record = record,

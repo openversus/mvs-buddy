@@ -3,15 +3,13 @@ using Microsoft.Extensions.Logging;
 namespace MvsBuddy.Changes;
 
 /// <summary>
-/// Changes to files, made all together or not at all. Nothing happens until <see cref="Apply"/>; <see cref="Steps"/> says
-/// what would, for a confirmation. Plans combine with <see cref="Then"/> into one: swapping two held sets is holding one,
-/// then restoring the other, with one way back if either fails.
+/// Changes to files, made all together or not at all: the paks a change moves, and files written outside a state. Nothing
+/// happens until <see cref="Apply"/>.
 /// </summary>
 public sealed class ChangePlan
 {
     private readonly HostSystem host;
     private readonly ILogger log;
-    private readonly List<Func<string?>> refusals = [];
     private readonly List<Step> steps = [];
     private readonly List<string> folders = [];
     private readonly List<(string Folder, string StopAt)> cleanups = [];
@@ -22,26 +20,6 @@ public sealed class ChangePlan
     {
         this.host = host;
         this.log = log;
-    }
-
-    /// <summary>What the plan would do, a line per step, in order.</summary>
-    public IReadOnlyList<string> Steps => steps.Select(s => s.Description).ToList();
-
-    /// <summary>This plan followed by <paramref name="next"/>, as one: either both happen or neither does.</summary>
-    public ChangePlan Then(ChangePlan next)
-    {
-        if (next == null)
-        {
-            throw new ArgumentNullException(nameof(next));
-        }
-        var both = new ChangePlan(host, log);
-        both.refusals.AddRange(refusals.Concat(next.refusals));
-        both.steps.AddRange(steps.Concat(next.steps));
-        both.folders.AddRange(folders.Concat(next.folders));
-        both.cleanups.AddRange(cleanups.Concat(next.cleanups));
-        both.failureCleanups.AddRange(failureCleanups.Concat(next.failureCleanups));
-        both.deleteAfter.AddRange(deleteAfter.Concat(next.deleteAfter));
-        return both;
     }
 
     /// <summary>
@@ -129,13 +107,6 @@ public sealed class ChangePlan
         {
             throw Refuse("MultiVersus is running. Close it, then try again.");
         }
-        foreach (var refusal in refusals)
-        {
-            if (refusal() is string reason)
-            {
-                throw Refuse(reason);
-            }
-        }
         if (DeniedFolders() is { Count: > 0 } denied)
         {
             string reason = $"This account is not allowed to change files in {string.Join(", ", denied)}, so nothing was changed.";
@@ -143,8 +114,6 @@ public sealed class ChangePlan
             throw new ChangeException(reason, denied);
         }
     }
-
-    internal void Refuse(Func<string?> reason) => refusals.Add(reason);
 
     /// <summary>Counts <paramref name="folder"/> among the folders the change writes, for <see cref="DeniedFolders"/>, when something else writes it.</summary>
     internal void Writes(string folder) => folders.Add(folder);

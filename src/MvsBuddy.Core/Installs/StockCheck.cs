@@ -18,7 +18,7 @@ public enum ExtraKind
 
     /// <summary>
     /// Ultimate ASI Loader and its license, which every ASI plugin loads through. Not the person's pick: a clean start sets
-    /// it aside only when no plugin stays (see <see cref="Changes.InstallChanges.CleanStart"/>).
+    /// it aside only when no plugin stays (see <see cref="Changes.GameStates.PrepareSetAside"/>).
     /// </summary>
     Loader,
 }

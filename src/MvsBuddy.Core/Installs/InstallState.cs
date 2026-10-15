@@ -35,9 +35,6 @@ public enum InstallStatus
 
     /// <summary>Ultimate ASI Loader without the mod.</summary>
     LoaderOnly,
-
-    /// <summary>The mod is held aside by the buddy (disabled), and none of it is installed.</summary>
-    Disabled,
 }
 
 /// <summary>A DLL beside the game under a name Ultimate ASI Loader can take.</summary>
@@ -151,9 +148,6 @@ public sealed record InstallState
     /// <summary>ASI plugins that are not OpenVersus, where the loader loads them from.</summary>
     public required IReadOnlyList<OtherPlugin> OtherPlugins { get; init; }
 
-    /// <summary>Files the buddy holds aside for this copy of the game, by set.</summary>
-    public required IReadOnlyList<Changes.HeldSet> Held { get; init; }
-
     /// <summary>
     /// The folders the buddy changes for this copy that this account may not change, as the system answers when it was
     /// read: the game's <c>Win64</c>, and for a recognised install its <c>Content/Paks</c> and its own folder, and where the
@@ -184,8 +178,7 @@ public sealed record InstallState
             bool loader = Loaders.Any(l => l.IsUltimateAsiLoader);
             if (Mod.Layout == ModLayout.None)
             {
-                return Held.Any(h => h.IsRecorded && Changes.InstallChanges.IsOpenVersusSet(h.Name)) ? InstallStatus.Disabled
-                    : loader ? InstallStatus.LoaderOnly : InstallStatus.NotInstalled;
+                return loader ? InstallStatus.LoaderOnly : InstallStatus.NotInstalled;
             }
             return loader ? InstallStatus.Installed : InstallStatus.LoaderMissing;
         }

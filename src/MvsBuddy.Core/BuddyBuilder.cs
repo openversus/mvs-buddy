@@ -24,7 +24,7 @@ public sealed class BuddyBuilder
 
     /// <summary>
     /// The buddy's own folder on this machine (<c>%LOCALAPPDATA%\mvs-buddy</c>, or <c>~/.local/share/mvs-buddy</c>), where
-    /// it keeps downloads and held files, and where an app can put its logs.
+    /// it keeps downloads, the release cache, each copy's states and the pak sets, and where an app can put its logs.
     /// </summary>
     public static string DefaultDataDirectory => HostSystem.Current().DataDirectory;
 
@@ -87,14 +87,12 @@ public sealed class BuddyBuilder
         var system = host ?? HostSystem.Current();
         var games = new GameFinder(system, loggerFactory.CreateLogger<GameFinder>());
         var installs = new InstallReader(system, loaderPin, loggerFactory.CreateLogger<InstallReader>());
-        var changes = new InstallChanges(system, loggerFactory.CreateLogger<InstallChanges>());
         var downloads = new Downloads(client, system, loggerFactory.CreateLogger<Downloads>());
-        var installer = new Installer(system, releases, downloads, changes, loaderPin, loggerFactory.CreateLogger<Installer>());
         var stock = new StockCheck(system, loggerFactory.CreateLogger<StockCheck>());
         var permissions = new Permissions(system, loggerFactory.CreateLogger<Permissions>());
         var cache = new ReleaseCache(system, downloads, loaderPin, loggerFactory.CreateLogger<ReleaseCache>());
         var pakStore = new PakStore(system, downloads, loggerFactory.CreateLogger<PakStore>());
         var states = new GameStates(system, releases, cache, pakStore, installs, loaderPin, loggerFactory.CreateLogger<GameStates>());
-        return new Buddy(releases, games, installs, changes, downloads, installer, stock, permissions, cache, pakStore, states, ownsHttp ? client : null);
+        return new Buddy(releases, games, installs, downloads, stock, permissions, cache, pakStore, states, ownsHttp ? client : null);
     }
 }
