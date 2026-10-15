@@ -636,7 +636,7 @@ internal sealed class MainScreen
         }
         if (report.Extras.Any(e => e.Kind == ExtraKind.Loader))
         {
-            rml.Append("<p class=\"muted\">Ultimate ASI Loader goes too, but only when nothing left needs it.</p>");
+            rml.Append("<p class=\"muted\">Ultimate ASI Loader goes too when nothing left needs it, unless one was here before the buddy first changed this copy.</p>");
         }
         foreach (string note in report.Notes)
         {

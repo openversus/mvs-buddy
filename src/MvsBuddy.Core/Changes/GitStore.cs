@@ -201,6 +201,30 @@ internal sealed class GitStore
     }
 
     /// <summary>
+    /// A tree of <paramref name="paths"/> (files under the working tree, relative, '/'-separated) as they are now, staged
+    /// as libgit2 stages them (modes included) through an index of its own: the store's index, and so what its states
+    /// track, is not touched. Ignored paths are left out. Returns the tree.
+    /// </summary>
+    internal string TreeOfFiles(IEnumerable<string> paths)
+    {
+        string tree = RequireWorkTree();
+        string index = Path.Combine(gitDir, $"index-{Guid.NewGuid():N}");
+        try
+        {
+            using var repo = new Repository(gitDir, new RepositoryOptions { WorkingDirectoryPath = tree, IndexPath = index });
+            foreach (string path in paths.Where(p => !repo.Ignore.IsPathIgnored(p)))
+            {
+                repo.Index.Add(path);
+            }
+            return repo.ObjectDatabase.CreateTree(repo.Index).Sha;
+        }
+        finally
+        {
+            File.Delete(index);
+        }
+    }
+
+    /// <summary>
     /// <paramref name="baseTree"/> (or nothing) with <paramref name="files"/> added or replaced (relative '/'-separated
     /// path, and the file whose bytes it holds; added as ordinary files) and <paramref name="remove"/> taken out. Returns
     /// the tree.

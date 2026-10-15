@@ -91,6 +91,9 @@ public sealed class GameStates
     /// <summary>The pak set MVS Infinite's paks are kept in while it is set aside.</summary>
     internal const string MvsInfinitePaks = "mvsi";
 
+    /// <summary>The copy as it was the first time the buddy changed it: one commit, made then and never moved.</summary>
+    internal const string InitialBranch = "initial";
+
     // The branches that hold what is set aside apart from OpenVersus. Each change keeps them as they were before it under
     // "previous-<name>", as it keeps the files as `previous`; undo puts them back, so undoing a clean start un-sets-aside
     // and undoing a put-back sets aside again.
@@ -103,17 +106,23 @@ public sealed class GameStates
     private const string PatternsFile = "PatternsCache.toml";
     private const string SampleFile = "sample_config.toml";
     private const string PakLine = "pak";
+    private const string LoaderLine = "loader";
+    private const string CoversLine = "covers";
+    private const string FirstSightLoader = "Ultimate ASI Loader stays: one was here before the buddy first changed this copy.";
 
     private readonly HostSystem host;
     private readonly ReleaseCatalog catalog;
     private readonly ReleaseCache cache;
     private readonly PakStore paks;
     private readonly InstallReader installs;
+    private readonly StockCheck stock;
     private readonly AsiLoaderPin pin;
     private readonly ILogger<GameStates> log;
 
-    internal GameStates(HostSystem host, ReleaseCatalog catalog, ReleaseCache cache, PakStore paks, InstallReader installs, AsiLoaderPin pin, ILogger<GameStates> log)
+    internal GameStates(HostSystem host, ReleaseCatalog catalog, ReleaseCache cache, PakStore paks, InstallReader installs, StockCheck stock, AsiLoaderPin pin,
+        ILogger<GameStates> log)
     {
+        this.stock = stock;
         this.host = host;
         this.catalog = catalog;
         this.cache = cache;
@@ -349,7 +358,8 @@ public sealed class GameStates
             throw new ArgumentNullException(nameof(state));
         }
         var copy = Layout(state.Game);
-        var (ovsPaths, _, staying, loaderPaths, live) = WhatGoes(state, copy, openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true);
+        bool keepLoaders = KeepsLoaders(state, copy);
+        var (ovsPaths, _, staying, loaderPaths, live) = WhatGoes(state, copy, openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true, keepLoaders);
         // Without the profile's folder (a prefix not known) the mod's paks are left where they are, as by every change.
         var goingPaks = state.SavedPaksDirectory == null ? [] : live;
         var kept = SetAsideOf(state).Where(s => s.Kind == SetAsideKind.OpenVersus).Select(s => s.Channel!.Value).ToList();
@@ -382,6 +392,10 @@ public sealed class GameStates
         else if (loader && staying.Count > 0)
         {
             summary.Add($"Ultimate ASI Loader stays: {string.Join(", ", staying)} still loads through it.");
+        }
+        else if (loader && keepLoaders)
+        {
+            summary.Add(FirstSightLoader);
         }
         else if (loader)
         {
@@ -531,7 +545,8 @@ public sealed class GameStates
     /// <param name="Paks">The live paks that go.</param>
     private sealed record Going(List<string> OpenVersus, List<string> MvsInfinite, List<string> Staying, List<string> Loader, List<PakAt> Paks);
 
-    private static Going WhatGoes(InstallState state, CopyLayout copy, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader)
+    private static Going WhatGoes(InstallState state, CopyLayout copy, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader,
+        bool keepLoaders)
     {
         // The mod's own files only: whether the loader and its license go is decided below, by its own rule.
         var ovsPaths = openVersus
@@ -543,7 +558,7 @@ public sealed class GameStates
         var staying = state.Mod.Plugins.Concat(state.Mod.OldLayoutFiles.Where(f => f.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)))
             .Concat(state.OtherPlugins.Select(p => p.Path)).Where(p => !(openVersus && IsOpenVersusPlugin(state, p)) && Relative(copy, p) is string r && !going.Contains(r))
             .Select(Path.GetFileName).OfType<string>().Distinct().ToList();
-        var loaderPaths = staying.Count == 0 && going.Count > 0 ? LoaderPaths(state, copy, onlyOurLoader) : [];
+        var loaderPaths = !keepLoaders && staying.Count == 0 && going.Count > 0 ? LoaderPaths(state, copy, onlyOurLoader) : [];
         var goingPaks = LivePaths(state, copy).Where(p => (openVersus && p.Home == null) || (mvsInfinite && p.Home != null)).ToList();
         return new Going(ovsPaths, mvsiPaths, staying, loaderPaths, goingPaks);
     }
@@ -551,7 +566,8 @@ public sealed class GameStates
     private PreparedChange SetAside(InstallState state, bool openVersus, bool mvsInfinite, IReadOnlyList<string> others, bool onlyOurLoader = false)
     {
         var copy = Layout(state.Game);
-        var (ovsPaths, mvsiPaths, staying, loaderPaths, goingPaks) = WhatGoes(state, copy, openVersus, mvsInfinite, others, onlyOurLoader);
+        bool keepLoaders = KeepsLoaders(state, copy);
+        var (ovsPaths, mvsiPaths, staying, loaderPaths, goingPaks) = WhatGoes(state, copy, openVersus, mvsInfinite, others, onlyOurLoader, keepLoaders);
         var going = new HashSet<string>(ovsPaths.Concat(mvsiPaths).Concat(others), StringComparer.Ordinal);
 
         var summary = new List<string>();
@@ -599,6 +615,10 @@ public sealed class GameStates
         else if (going.Count > 0 && staying.Count > 0)
         {
             summary.Add($"Ultimate ASI Loader stays: {string.Join(", ", staying)} still loads through it.");
+        }
+        else if (going.Count > 0 && keepLoaders && state.Loaders.Any(l => l.IsUltimateAsiLoader))
+        {
+            summary.Add(FirstSightLoader);
         }
         else if (going.Count > 0 && state.Loaders.Any(l => l.IsUltimateAsiLoader))
         {
@@ -659,9 +679,12 @@ public sealed class GameStates
         }
         summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home)).Concat(LivePaths(state, copy).Where(p => p.Home != null))));
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
+        // A loader the copy keeps (one was here at first sight) is taken out only when the state brings one back.
+        bool keepLoaders = KeepsLoaders(state, copy) && !owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
         return new PreparedChange(summary, null, refused, report => Change(report, state.Game, $"before OpenVersus {channel} was turned on", $"OpenVersus {channel}, turned on", refused,
             (_, live) => [.. found, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
-            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned)))));
+            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p)))
+                .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned)))));
     }
 
     /// <summary>
@@ -808,6 +831,13 @@ public sealed class GameStates
         var sets = SetBranches.ToDictionary(b => b, store.Tip);
         var previousSets = SetBranches.ToDictionary(b => b, b => store.Tip(PreviousOf + b));
         log.LogInformation("{Title}: read in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        // The first change of this copy: no state yet. Kept even if this change is then refused, since nothing has moved.
+        if (store.Tip(CurrentBranch) == null && store.Tip(InitialBranch) == null)
+        {
+            progress?.Report("Keeping how this copy is before the buddy first changes it...");
+            MakeInitial(store, copy, now, live);
+            log.LogInformation("{Title}: first look kept in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
+        }
         progress?.Report("Saving what is there now, for undo...");
         string before = store.Snapshot(Roots(now, copy).Concat(extraRoots ?? []), Message(beforeWhat, live));
         string beforeTree = store.TreeOf(before);
@@ -873,6 +903,52 @@ public sealed class GameStates
         store.Prune();
         log.LogInformation("{Title}: done for {Folder} in {Seconds:F1} s", title, copy.WorkTree, clock.Elapsed.TotalSeconds);
     }
+
+    // `initial`: the copy before the buddy first changes it, for rolling back to and for the rule that a loader there then is
+    // never taken away. What the game did not ship (StockCheck's extras); without the game's manifests, what the buddy
+    // recognises (the mod, the loaders and the license, other plugins), and the message says so. Made through an index of its
+    // own, so the states do not start tracking these files. The paks of the mod and MVS Infinite are lines by checksum, never
+    // in git; the loaders are lines too.
+    private void MakeInitial(GitStore store, CopyLayout copy, InstallState now, IReadOnlyList<LivePak> live)
+    {
+        var report = stock.Read(now);
+        var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var paks = new HashSet<string>(live.Select(p => p.Path), comparer);
+        var files = report.HasManifests
+            ? report.Extras.Select(e => e.Path)
+            : now.Mod.Files.Concat(now.Mod.OldLayoutFiles).Concat(now.Loaders.Select(l => l.Path)).Concat(now.OtherPlugins.Select(p => p.Path))
+                .Append(Path.Combine(now.Game.Win64Directory, Installer.LicenseName));
+        var paths = files.Where(f => !paks.Contains(f) && File.Exists(f)).Select(f => Relative(copy, f)).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        string lines = (report.HasManifests ? "" : $"{CoversLine}\trecognised\n")
+            + string.Concat(now.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => $"{LoaderLine}\t{l.FileName}\t{l.Sha256}\n"));
+        string message = Message("How this copy was the first time the buddy changed it", live);
+        int split = message.IndexOf("\n\n", StringComparison.Ordinal) + 2;
+        store.Commit(InitialBranch, store.TreeOfFiles(paths), message.Substring(0, split) + lines + message.Substring(split));
+    }
+
+    // Whether the copy keeps its loaders whatever else goes: one was there the first time the buddy saw it. That
+    // is `initial`'s loader lines; before the first change, what is there now; for a copy whose states are older than
+    // `initial`, no: the install record's rule alone.
+    private bool KeepsLoaders(InstallState state, CopyLayout copy)
+    {
+        bool now = state.Loaders.Any(l => l.IsUltimateAsiLoader);
+        if (!LibGit2Sharp.Repository.IsValid(copy.GitDir))
+        {
+            return now;
+        }
+        var store = Open(copy);
+        if (store.Tip(InitialBranch) is string initial)
+        {
+            return store.Describe(initial).Message.Split('\n').Any(l => l.StartsWith(LoaderLine + "\t", StringComparison.Ordinal));
+        }
+        return store.Tip(CurrentBranch) == null && now;
+    }
+
+    // A loader beside the game, or its license, as the store names them.
+    private static bool IsLoaderPath(CopyLayout copy, string path) =>
+        path == copy.Prefix + Installer.LicenseName
+        || (path.StartsWith(copy.Prefix, StringComparison.Ordinal) && path.IndexOf('/', copy.Prefix.Length) < 0
+            && InstallReader.ProxyNames.Contains(path.Substring(copy.Prefix.Length), StringComparer.OrdinalIgnoreCase));
 
     private static void Point(GitStore store, string branch, string? commit)
     {

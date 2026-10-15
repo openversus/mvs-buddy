@@ -144,6 +144,30 @@ public sealed class StockCheckTests : IDisposable
     }
 
     [Fact]
+    public void With_the_manifests_initial_holds_everything_the_game_did_not_ship_but_the_paks()
+    {
+        Crowded();
+        var buddy = Buddy();
+
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+
+        var store = buddy.States.Open(buddy.States.Layout(Game()));
+        string initial = store.Tip("initial")!;
+        Assert.Equal(
+        [
+            "MultiVersus/Binaries/Win64/LICENSE_Ultimate_ASI_Loader.txt",
+            "MultiVersus/Binaries/Win64/dxgi.dll",
+            "MultiVersus/Binaries/Win64/plugins/MVSIASI.asi",
+            "MultiVersus/Binaries/Win64/plugins/OpenVersus/OpenVersus_2026.10.12.01.asi",
+            "MultiVersus/Binaries/Win64/version.dll",
+        ], store.Paths(store.TreeOf(initial)).Order(StringComparer.Ordinal));
+        string message = store.Describe(initial).Message;
+        Assert.DoesNotContain("covers", message);
+        Assert.Equal(["MVSI_Content_P.pak"], GameStates.PaksIn(message).Select(p => p.Name));
+        Assert.DoesNotContain("MultiVersus/Binaries/Win64/dxgi.dll", store.Paths(store.TreeOf(store.Tip("current")!)));
+    }
+
+    [Fact]
     public void Setting_openversus_aside_while_mvs_infinite_stays_keeps_the_loader_it_loads_through()
     {
         Crowded();
@@ -163,17 +187,19 @@ public sealed class StockCheckTests : IDisposable
     }
 
     [Fact]
-    public void A_clean_start_to_stock_sets_each_end_state_aside_on_its_own_and_openversus_comes_back_with_its_loader()
+    public void A_clean_start_to_stock_sets_each_end_state_aside_on_its_own_and_keeps_the_loader_that_was_there_first()
     {
         Crowded();
         var buddy = Buddy();
         var state = buddy.Installs.Read(Game());
 
-        buddy.States.PrepareSetAside(state, buddy.Stock.Read(state).Extras).Apply();
+        var clean = buddy.States.PrepareSetAside(state, buddy.Stock.Read(state).Extras);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", clean.Summary);
+        clean.Apply();
 
         var after = buddy.Installs.Read(Game());
-        Assert.Empty(buddy.Stock.Read(after).Extras);
-        Assert.Equal(InstallStatus.NotInstalled, after.Status);
+        Assert.Equal([ExtraKind.Loader], buddy.Stock.Read(after).Extras.Select(e => e.Kind).Distinct());
+        Assert.Equal(InstallStatus.LoaderOnly, after.Status);
         Assert.Equal([SetAsideKind.OpenVersus, SetAsideKind.MvsInfinite, SetAsideKind.Rest], buddy.States.SetAsideOf(after).Select(a => a.Kind));
 
         buddy.States.PrepareTurnOn(after, Channel.Prod).Apply();
