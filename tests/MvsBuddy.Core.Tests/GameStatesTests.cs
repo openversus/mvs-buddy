@@ -587,7 +587,7 @@ public sealed class GameStatesTests : IDisposable
         string mvsiPak = Path.Combine(Root, "MultiVersus", "Content", "Paks", "MVSI_Content_P.pak");
 
         var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }));
-        Assert.Contains("MVS Infinite: 1 file set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back with its paks.", install.Summary);
+        Assert.Contains("MVS Infinite (1 file and 1 pak) is set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back.", install.Summary);
         install.Apply();
         Assert.False(File.Exists(mvsiPlugin) || File.Exists(mvsiPak));
         Assert.Equal([(SetAsideKind.MvsInfinite, (Channel?)null)], Aside(buddy));
@@ -611,6 +611,43 @@ public sealed class GameStatesTests : IDisposable
         buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
         Assert.Equal(onMvsi, Everything());
         Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Testing)], Aside(buddy));
+    }
+
+    [Fact]
+    public async Task MVS_Infinites_paks_alone_and_the_ones_the_person_says_are_its_move_out_of_the_way_and_come_back_where_they_were()
+    {
+        Game();
+        string paks = Path.Combine(Root, "MultiVersus", "Content", "Paks");
+        string mvsi = tree.File("mvsi pak", [.. Rel(paks), "MVSI_Content_P.pak"]);
+        string mvsiUcas = tree.File("mvsi ucas", [.. Rel(paks), "MVSI_Content_P.ucas"]);
+        string skins = tree.File("skins", [.. Rel(paks), "~mods", "Skins_P.pak"]);
+        string other = tree.File("other", [.. Rel(paks), "~mods", "Other_P.pak"]);
+        var buddy = Buddy();
+        Assert.Equal(["MVSI_Content_P.pak", "MVSI_Content_P.ucas"], buddy.Installs.Read(Game()).OtherPaks.Where(p => p.IsMvsInfinite).Select(p => p.Name).Order(StringComparer.Ordinal));
+        var first = Everything();
+
+        // The person says Skins_P is MVS Infinite's and Other_P is not; both are remembered for this copy.
+        buddy.States.AnswerMvsInfinitePaks(Game(), [skins], [other]);
+        var answered = buddy.Installs.Read(Game());
+        Assert.Equal(["MVSI_Content_P.pak:True:False", "MVSI_Content_P.ucas:True:False", "Other_P.pak:False:True", "Skins_P.pak:True:True"],
+            answered.OtherPaks.Select(p => $"{p.Name}:{p.IsMvsInfinite}:{p.Answered}").Order(StringComparer.Ordinal));
+
+        var install = await buddy.States.PrepareInstallAsync(answered, Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }));
+        Assert.Contains("MVS Infinite (3 paks) is set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back.", install.Summary);
+        install.Apply();
+        Assert.Equal(["Other_P.pak"], Directory.EnumerateFiles(paks, "*", SearchOption.AllDirectories).Select(Path.GetFileName).Where(n => n != "pakchunk0-Windows.pak"));
+        Assert.Equal([("MVSI_Content_P.pak", "MultiVersus/Content/Paks"), ("MVSI_Content_P.ucas", "MultiVersus/Content/Paks"), ("Skins_P.pak", "MultiVersus/Content/Paks/~mods")],
+            buddy.Paks.Read("mvsi").Select(p => (p.Name, p.Home)).OrderBy(p => p.Name, StringComparer.Ordinal));
+        var installed = Everything();
+
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(first, Everything());
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(installed, Everything());
+
+        buddy.States.PrepareSwitchToMvsInfinite(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(("mvsi pak", "mvsi ucas", "skins", "other"), (Read(mvsi), Read(mvsiUcas), Read(skins), Read(other)));
+        Assert.Equal(ModLayout.None, buddy.Installs.Read(Game()).Mod.Layout);
     }
 
     [Fact]

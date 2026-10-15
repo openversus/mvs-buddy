@@ -333,8 +333,8 @@ internal sealed class MainScreen
             {
                 // With MVS Infinite here, turning OpenVersus on is a switch: MVS Infinite is set aside in the same change.
                 rml.Append(MvsInfiniteLive(s)
-                    ? Button($"Switch to OpenVersus {channel}", () => Prepare($"Switch to OpenVersus {channel}?",
-                        progress => buddy.States.PrepareSwitchToOpenVersus(s, channel, progress), $"Switched to OpenVersus {channel}."), "primary")
+                    ? Button($"Switch to OpenVersus {channel}", () => WithPakAnswers(s, answered => Prepare($"Switch to OpenVersus {channel}?",
+                        progress => buddy.States.PrepareSwitchToOpenVersus(answered, channel, progress), $"Switched to OpenVersus {channel}.")), "primary")
                     : Button($"Turn OpenVersus {channel} on", () => Prepare($"Turn OpenVersus {channel} on?",
                         progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
             }
@@ -463,10 +463,12 @@ internal sealed class MainScreen
         return $"Install {release.Tag}";
     }
 
-    // Downloads and checks everything first; nothing in the game changes until the person confirms.
-    private void Prepare(Release release)
+    // Downloads and checks everything first; nothing in the game changes until the person confirms. With MVS Infinite here,
+    // the person first says which other paks are its, since they all move out of the way with it.
+    private void Prepare(Release release) => WithPakAnswers(state!, answered => PrepareInstall(answered, release));
+
+    private void PrepareInstall(InstallState s, Release release)
     {
-        var s = state!;
         message = null;
         var stop = CancellationTokenSource.CreateLinkedTokenSource(ui.Closing);
         string line = "Starting...";
@@ -539,7 +541,82 @@ internal sealed class MainScreen
 
     // MVS Infinite is live: a plugin of its name, which the reader finds only when it is there. Every switch button hangs
     // on this or on MVS Infinite being set aside, so a copy without it shows nothing of it.
-    private static bool MvsInfiniteLive(InstallState s) => s.OtherPlugins.Any(p => p.IsMvsInfinite);
+    private static bool MvsInfiniteLive(InstallState s) => s.OtherPlugins.Any(p => p.IsMvsInfinite) || s.OtherPaks.Any(p => p.IsMvsInfinite);
+
+    /// <summary>A pak and its companions (.ucas, .utoc, .sig): one name in one folder, asked about once.</summary>
+    private sealed record PakGroup(string Name, string Folder, IReadOnlyList<string> Files, long Size);
+
+    private static List<PakGroup> Groups(IEnumerable<OtherPak> paks) => paks
+        .GroupBy(p => Path.Combine(Path.GetDirectoryName(p.Path)!, Path.GetFileNameWithoutExtension(p.Path)))
+        .Select(g => new PakGroup(Path.GetFileNameWithoutExtension(g.Key), Path.GetDirectoryName(g.Key)!, g.Select(p => p.Path).ToList(), g.Sum(p => p.Size)))
+        .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+    // MVS Infinite's paks cannot stay in the game's Content/Paks with OpenVersus, so before OpenVersus goes live beside it
+    // the person says whether any other non-stock paks there are its too. The answers are kept for this copy: each pak is
+    // asked about once. Without MVS Infinite here, or nothing to ask, it goes straight on.
+    private void WithPakAnswers(InstallState s, Action<InstallState> then)
+    {
+        var unanswered = Groups(s.OtherPaks.Where(p => !p.IsMvsInfinite && !p.Answered));
+        if (!MvsInfiniteLive(s) || unanswered.Count == 0)
+        {
+            then(s);
+            return;
+        }
+        ShowPakAnswers(s, unanswered, [], then);
+    }
+
+    private void ShowPakAnswers(InstallState s, List<PakGroup> unanswered, HashSet<string> theirs, Action<InstallState> then)
+    {
+        actions.Clear();
+        var rml = new StringBuilder("<h2>MVS Infinite's paks</h2>");
+        var known = Groups(s.OtherPaks.Where(p => p.IsMvsInfinite));
+        if (known.Count > 0)
+        {
+            rml.Append($"<p>These are MVS Infinite's, and move out of the game's folder with it: {Html.Text(string.Join(", ", known.Select(g => g.Name)))}.</p>");
+        }
+        rml.Append("<p>These paks in the game's Content/Paks are not the game's own. MVS Infinite's paks cannot stay there with OpenVersus, "
+            + "so pick any that came with it; the others stay where they are. The buddy remembers your answers for this copy.</p>");
+        foreach (var group in unanswered)
+        {
+            string extensions = string.Join(", ", group.Files.Select(f => Path.GetExtension(f).TrimStart('.')).Order(StringComparer.OrdinalIgnoreCase));
+            string where = Path.GetRelativePath(GameFolder(s.Game), group.Folder);
+            rml.Append($"<div class=\"card\"><p class=\"strong\">{Html.Text(group.Name)}</p><p class=\"muted\">{Html.Text(where)}: {Html.Text(extensions)}, {Size(group.Size)}</p>");
+            bool picked = theirs.Contains(group.Name);
+            foreach (var (move, word) in new[] { (false, "Not MVS Infinite's"), (true, "MVS Infinite's: move it") })
+            {
+                rml.Append(Button(word, () =>
+                {
+                    if (move)
+                    {
+                        theirs.Add(group.Name);
+                    }
+                    else
+                    {
+                        theirs.Remove(group.Name);
+                    }
+                    ShowPakAnswers(s, unanswered, theirs, then);
+                }, move == picked ? "tab on" : "tab"));
+            }
+            rml.Append("</div>");
+        }
+        rml.Append("<div class=\"actions\">").Append(Button("Continue", () =>
+        {
+            var copy = s.Game;
+            var mine = unanswered.Where(g => theirs.Contains(g.Name)).SelectMany(g => g.Files).ToList();
+            var others = unanswered.Where(g => !theirs.Contains(g.Name)).SelectMany(g => g.Files).ToList();
+            Show(Working("Reading what is installed..."));
+            ui.Run(() =>
+            {
+                buddy.States.AnswerMvsInfinitePaks(copy, mine, others);
+                return Task.FromResult(buddy.Installs.Read(copy));
+            }, answered =>
+            {
+                state = answered;
+                then(answered);
+            }, Failed);
+        }, "primary")).Append(Button("Cancel", ShowGame)).Append("</div>");
+        Show(rml.ToString());
+    }
 
     // OpenVersus of a channel that is kept for this copy and not live now: turning it on brings it back as it was.
     private IEnumerable<Channel> KeptChannels() => kept.Where(k => k.Kind == SetAsideKind.OpenVersus).Select(k => k.Channel!.Value);
@@ -548,7 +625,7 @@ internal sealed class MainScreen
     {
         InstallStatus.Installed => $"OpenVersus {Version(s)}{ChannelName(s)} is installed.",
         InstallStatus.LoaderMissing => $"OpenVersus {Version(s)}{ChannelName(s)} is here, but the loader it needs is missing.",
-        _ when KeptChannels().Any() => MvsInfiniteLive(s) ? "MVS Infinite is on; OpenVersus is turned off." : "OpenVersus is turned off.",
+        _ when KeptChannels().Any() => s.OtherPlugins.Any(p => p.IsMvsInfinite) ? "MVS Infinite is on; OpenVersus is turned off." : "OpenVersus is turned off.",
         InstallStatus.LoaderOnly => "OpenVersus is not installed; only its loader is here.",
         _ => "OpenVersus is not installed.",
     };

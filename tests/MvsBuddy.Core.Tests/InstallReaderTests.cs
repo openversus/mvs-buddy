@@ -210,12 +210,17 @@ public sealed class InstallReaderTests : IDisposable
 
     [Theory]
     [InlineData("MVSI_Content_P.pak", true)]
+    [InlineData("MVSIContent_P.ucas", true)]
     [InlineData("MVS_Infinite_P.utoc", true)]
-    [InlineData("pakchunk5-Infinite_P.ucas", true)]
     [InlineData("mvsi.sig", true)]
+    [InlineData("mvs_infinite_skins_P.pak", true)]
+    [InlineData("pakchunk5-Infinite_P.ucas", false)]
+    [InlineData("Infinite_P.pak", false)]
+    [InlineData("My_MVSI_P.pak", false)]
+    [InlineData("MVS_Skins_P.pak", false)]
     [InlineData("Skins_P.pak", false)]
     [InlineData("OVS_P.pak", false)]
-    public void An_MVS_Infinite_pak_is_guessed_by_its_name(string name, bool expected) =>
+    public void An_MVS_Infinite_pak_is_known_by_a_name_that_starts_with_MVSI_or_MVS_Infinite(string name, bool expected) =>
         Assert.Equal(expected, InstallReader.IsMvsInfinitePak(name));
 
     [Fact]
@@ -236,7 +241,21 @@ public sealed class InstallReaderTests : IDisposable
         Assert.Equal(["OVS_Audio_P.pak", "OVS_P.pak", "OVS_P.ucas", "OVS_P.utoc"], state.PaksInGame.Select(p => p.Name).Order(StringComparer.Ordinal));
         Assert.Equal(["MVSI_Content_P.pak:True", "Skins_P.pak:False"], state.OtherPaks.Select(p => $"{p.Name}:{p.IsMvsInfinite}").Order(StringComparer.Ordinal));
         Assert.Contains(state.Notes, n => n.Contains("belong in the user profile"));
-        Assert.Contains(state.Notes, n => n.Contains("neither the game's nor OpenVersus's"));
+        Assert.Contains(state.Notes, n => n.StartsWith("MVS Infinite's paks are in the game's Content", StringComparison.Ordinal) && n.Contains("MVSI_Content_P.pak"));
+        Assert.Contains(state.Notes, n => n.Contains("neither the game's nor OpenVersus's") && n.Contains("Skins_P.pak") && !n.Contains("MVS Infinite"));
+    }
+
+    [Fact]
+    public void Another_mods_paks_never_bring_up_MVS_Infinite()
+    {
+        var game = Steam(out string win64);
+        tree.File("p", [.. Rel(win64), "..", "..", "Content", "Paks", "~mods", "Skins_P.pak"]);
+
+        var state = Reader().Read(game);
+
+        Assert.Contains(state.Notes, n => n.Contains("Skins_P.pak"));
+        Assert.DoesNotContain(state.Notes, n => n.Contains("MVS Infinite"));
+        Assert.False(Assert.Single(state.OtherPaks).IsMvsInfinite);
     }
 
     [Fact]

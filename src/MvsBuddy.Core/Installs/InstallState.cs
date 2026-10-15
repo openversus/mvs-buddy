@@ -60,11 +60,14 @@ public sealed record OtherPlugin(string Path, bool IsMvsInfinite)
 /// <summary>A pak file in the game's <c>Content/Paks</c> that is neither the game's own nor OpenVersus's.</summary>
 /// <param name="Path">The file.</param>
 /// <param name="Size">Its size in bytes.</param>
-/// <param name="IsMvsInfinite">Whether its name says MVS Infinite (it has <c>MVSI</c> or <c>Infinite</c> in it); a guess, which the person can overrule.</param>
+/// <param name="IsMvsInfinite">Whether it is MVS Infinite's: its name starts with <c>MVSI</c> or <c>MVS_Infinite</c>, or the person said so.</param>
 public sealed record OtherPak(string Path, long Size, bool IsMvsInfinite)
 {
     /// <summary>The file's name.</summary>
     public string Name => System.IO.Path.GetFileName(Path);
+
+    /// <summary>Whether the person said whose it is (MVS Infinite's or not); the buddy asks only about the others.</summary>
+    public bool Answered { get; init; }
 }
 
 /// <summary>A pak file (a <c>.pak</c>, <c>.utoc</c>, <c>.ucas</c> or <c>.sig</c>).</summary>

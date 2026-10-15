@@ -237,9 +237,11 @@ public sealed class GameStates
         summary.AddRange(ChannelLines(state, copy, release.Channel));
         // MVS Infinite cannot run with OpenVersus: an install sets it aside in the same change.
         var mvsi = LiveMvsInfinite(state, copy);
-        if (mvsi.Count > 0)
+        int mvsiPaks = LivePaths(state, copy).Count(p => p.Home != null);
+        bool mvsiAside = mvsi.Count + mvsiPaks > 0;
+        if (mvsiAside)
         {
-            summary.Add(MvsInfiniteAsideLine(mvsi.Count));
+            summary.Add(MvsInfiniteAsideLine(mvsi.Count, mvsiPaks));
         }
 
         // Settings: written when the release ships its own or the person has some.
@@ -279,7 +281,7 @@ public sealed class GameStates
             : $"Ultimate ASI Loader {pin.Version} as {loaderName}"
                 + (otherLoaders.Count > 0 ? $"; the other copy ({string.Join(", ", otherLoaders.Select(l => l.FileName))}) goes, as one is enough." : "."));
         summary.AddRange(PakLines(state, copy, staged.Select(p => new PakAt(p.Name, p.Path, p.Home))
-            .Concat(mvsi.Count > 0 ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
+            .Concat(mvsiAside ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
         var notChecked = (cached.ZipChecked ? Array.Empty<string>() : new[] { release.InstallZip!.Name }).Concat(staged.Where(p => !p.Checked).Select(p => p.Name)).ToList();
         if (notChecked.Count > 0)
         {
@@ -315,7 +317,7 @@ public sealed class GameStates
         return new PreparedChange(summary, merge, refused, report => Change(report, state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
             $"OpenVersus {version} ({release.Channel})", refused,
             // The release's paks; MVS Infinite's stay where they are, unless it is set aside: then they leave as its set.
-            (_, live) => [.. staged, .. live.Where(p => p.Home != null && mvsi.Count == 0).Select(p => p.InPlace)],
+            (_, live) => [.. staged, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
             (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes)
                 .Concat(mvsi.Select(p => (TreeEdit)new Removal(p)))),
             (store, before) => SetMvsInfiniteAside(store, before, mvsi),
@@ -701,20 +703,22 @@ public sealed class GameStates
             summary.Add($"The OpenVersus here ({live.Channel}) is kept as it is, for turning it on again.");
         }
         var mvsi = setMvsInfiniteAside ? LiveMvsInfinite(state, copy) : [];
-        if (mvsi.Count > 0)
+        int mvsiPaks = setMvsInfiniteAside ? LivePaths(state, copy).Count(p => p.Home != null) : 0;
+        bool mvsiAside = mvsi.Count + mvsiPaks > 0;
+        if (mvsiAside)
         {
-            summary.Add(MvsInfiniteAsideLine(mvsi.Count));
+            summary.Add(MvsInfiniteAsideLine(mvsi.Count, mvsiPaks));
         }
         summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
-            .Concat(mvsi.Count > 0 ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
+            .Concat(mvsiAside ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         // A loader the copy keeps (one was here at first sight) is taken out only when the state brings one back.
         bool keepLoaders = KeepsLoaders(state, copy) && !owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
         return new PreparedChange(summary, null, refused, report => Change(report, state.Game,
-            mvsi.Count > 0 ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
-            mvsi.Count > 0 ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", refused,
+            mvsiAside ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
+            mvsiAside ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", refused,
             // MVS Infinite's paks stay where they are, unless it is set aside: then they leave as its set.
-            (_, live) => [.. found, .. live.Where(p => p.Home != null && mvsi.Count == 0).Select(p => p.InPlace)],
+            (_, live) => [.. found, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
             (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p))).Concat(mvsi)
                 .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned))),
             (store, before) => SetMvsInfiniteAside(store, before, mvsi),
@@ -771,13 +775,41 @@ public sealed class GameStates
             paths));
     }
 
-    // MVS Infinite live here, as the store names its plugins: only by a plugin of its name, never by the paks alone, whose
-    // names are a guess and could be another mod's. Its paks go with it as the paks the reader takes to be its.
+    // MVS Infinite's plugins live here, as the store names them. Its paks (by their names, or as the person said) are the
+    // live paks with a home in the game's folder; either is MVS Infinite being here, which OpenVersus cannot run beside.
     private static List<string> LiveMvsInfinite(InstallState state, CopyLayout copy) =>
         state.OtherPlugins.Where(p => p.IsMvsInfinite).Select(p => Relative(copy, p.Path)).OfType<string>().ToList();
 
-    private static string MvsInfiniteAsideLine(int files) =>
-        $"MVS Infinite: {files} {Files(files)} set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back with its paks.";
+    private static string MvsInfiniteAsideLine(int files, int paks)
+    {
+        string what = files > 0 && paks > 0 ? $"{files} {Files(files)} and {paks} {Paks(paks)}" : files > 0 ? $"{files} {Files(files)}" : $"{paks} {Paks(paks)}";
+        return $"MVS Infinite ({what}) is set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back.";
+    }
+
+    /// <summary>Where the person's answers about a copy's paks are kept: which are MVS Infinite's and which are not.</summary>
+    internal static string PakAnswersFile(HostSystem host, string win64) =>
+        Path.Combine(host.DataDirectory, StatesFolder, CopyKey(host.RealPath(Path.GetFullPath(win64).TrimEnd(Path.DirectorySeparatorChar)), host.IsWindows) + ".mvsi-paks");
+
+    /// <summary>
+    /// Writes down, for <paramref name="game"/>'s copy, which paks are MVS Infinite's (<paramref name="theirs"/>) and which
+    /// are not (<paramref name="notTheirs"/>), by name, as the person says. From then on the first move with MVS Infinite
+    /// as its own paks do, and neither is asked about again.
+    /// </summary>
+    public void AnswerMvsInfinitePaks(GameInstall game, IEnumerable<string> theirs, IEnumerable<string> notTheirs)
+    {
+        string file = PakAnswersFile(host, (game ?? throw new ArgumentNullException(nameof(game))).Win64Directory);
+        var answers = InstallReader.PakAnswers(file);
+        foreach (string pak in theirs)
+        {
+            answers[InstallReader.PakKey(pak)] = true;
+        }
+        foreach (string pak in notTheirs)
+        {
+            answers[InstallReader.PakKey(pak)] = false;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllLines(file, answers.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => $"{(a.Value ? "mvsi" : "other")}\t{a.Key}"));
+    }
 
     // MVS Infinite's plugins, as they were before the change, as the state set aside; one set aside before is replaced whole.
     private static void SetMvsInfiniteAside(GitStore store, string before, IReadOnlyList<string> plugins)

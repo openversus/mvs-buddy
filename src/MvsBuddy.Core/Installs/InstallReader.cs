@@ -73,9 +73,13 @@ public sealed class InstallReader
         var paksInGame = game.Verified
             ? PakFiles(Path.Combine(game_, "Content"), deep: true).Concat(PakFiles(Path.Combine(game_, "Binaries"), deep: true)).Where(IsOurs).ToList()
             : [];
+        // Whose each is: MVS Infinite's by its name, or as the person said for this copy.
+        var answers = string.IsNullOrEmpty(host.DataDirectory) ? new Dictionary<string, bool>() : PakAnswers(Changes.GameStates.PakAnswersFile(host, win64));
         var otherPaks = game.Verified
             ? PakFiles(Path.Combine(game_, "Content", "Paks"), deep: true).Where(p => !IsOurs(p) && !GameOwnPak.IsMatch(p.Name))
-                .Select(p => new OtherPak(p.Path, p.Size, IsMvsInfinitePak(p.Name))).ToList()
+                .Select(p => answers.TryGetValue(PakKey(p.Name), out bool theirs)
+                    ? new OtherPak(p.Path, p.Size, theirs) { Answered = true }
+                    : new OtherPak(p.Path, p.Size, IsMvsInfinitePak(p.Name))).ToList()
             : [];
 
         var notes = new List<string>();
@@ -108,9 +112,13 @@ public sealed class InstallReader
         {
             notes.Add($"OpenVersus paks are inside the game's folder ({string.Join(", ", paksInGame.Select(p => Relative(game_, p.Path)))}); they belong in the user profile, where the mod keeps them.");
         }
-        if (otherPaks.Count > 0)
+        if (otherPaks.Where(p => p.IsMvsInfinite).ToList() is { Count: > 0 } mvsiPaks)
         {
-            notes.Add($"The game's Content{Path.DirectorySeparatorChar}Paks holds paks that are neither the game's nor OpenVersus's ({string.Join(", ", otherPaks.Select(p => Relative(game_, p.Path)))}); another mod's, such as MVS Infinite's, which would conflict too.");
+            notes.Add($"MVS Infinite's paks are in the game's Content{Path.DirectorySeparatorChar}Paks ({string.Join(", ", mvsiPaks.Select(p => Relative(game_, p.Path)))}); OpenVersus does not work while they are there.");
+        }
+        if (otherPaks.Where(p => !p.IsMvsInfinite).ToList() is { Count: > 0 } elsePaks)
+        {
+            notes.Add($"The game's Content{Path.DirectorySeparatorChar}Paks holds paks that are neither the game's nor OpenVersus's ({string.Join(", ", elsePaks.Select(p => Relative(game_, p.Path)))}): another mod's, which can conflict with OpenVersus.");
         }
         bool notStarted = NotStartedYet(game);
         if (notStarted)
@@ -161,14 +169,35 @@ public sealed class InstallReader
     }
 
     /// <summary>
-    /// Whether a pak's name says MVS Infinite: letters and digits only, it has <c>mvsi</c> or <c>infinite</c> in it
-    /// (MVSI_Content_P, MVS_Infinite_P, Infinite_P). Nobody has seen the mod's pak names; this is the guess its author's
-    /// naming suggests, and only decides what is picked by default.
+    /// Whether a pak's name says MVS Infinite: it starts with <c>MVSI</c> or <c>MVS_Infinite</c>, in any case, as the
+    /// mod's paks are named. Other paks are MVS Infinite's only when the person says so.
     /// </summary>
     internal static bool IsMvsInfinitePak(string fileName)
     {
-        string name = new string(Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
-        return name.Contains("mvsi") || name.Contains("infinite");
+        string name = Path.GetFileNameWithoutExtension(fileName);
+        return name.StartsWith("MVSI", StringComparison.OrdinalIgnoreCase) || name.StartsWith("MVS_Infinite", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A pak's name as the answers about it go: without its extension (its .pak, .ucas, .utoc and .sig are one), any case.</summary>
+    internal static string PakKey(string fileName) => Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant();
+
+    /// <summary>The person's answers about a copy's paks (<c>mvsi</c> or <c>other</c>, a tab, the pak's key, a line each): true for MVS Infinite's.</summary>
+    internal static Dictionary<string, bool> PakAnswers(string file)
+    {
+        var answers = new Dictionary<string, bool>(StringComparer.Ordinal);
+        if (!File.Exists(file))
+        {
+            return answers;
+        }
+        foreach (string line in File.ReadAllLines(file))
+        {
+            string[] fields = line.Split('\t');
+            if (fields.Length == 2 && (fields[0] == "mvsi" || fields[0] == "other") && fields[1].Length > 0)
+            {
+                answers[fields[1]] = fields[0] == "mvsi";
+            }
+        }
+        return answers;
     }
 
     /// <summary>
