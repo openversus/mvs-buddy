@@ -212,6 +212,11 @@ public sealed class GameStates
             throw new ArgumentNullException(state == null ? nameof(state) : nameof(release));
         }
         options ??= new InstallOptions();
+        if (IsOlderThanInstallable(release.Version))
+        {
+            string old = $"OpenVersus {release.Tag} is older than {ModVersion.Text(OldestInstallable)}, the oldest release the buddy installs. Pick a newer one.";
+            return new PreparedChange([old], null, old, _ => throw new ChangeException(old));
+        }
         var copy = Layout(state.Game);
         var cached = await cache.GetAsync(release, progress, cancellationToken).ConfigureAwait(false);
         var cacheStore = cache.Store();
@@ -1030,6 +1035,14 @@ public sealed class GameStates
         path == copy.Prefix + Installer.LicenseName
         || (path.StartsWith(copy.Prefix, StringComparison.Ordinal) && path.IndexOf('/', copy.Prefix.Length) < 0
             && InstallReader.ProxyNames.Contains(path.Substring(copy.Prefix.Length), StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The oldest release the buddy installs; an older one is refused before anything is downloaded.</summary>
+    internal static readonly Version OldestInstallable = new(2026, 10, 1, 0);
+
+    // Older than OldestInstallable, with a missing part read as 0 (Version counts 2026.10.1 as older than 2026.10.1.0). A
+    // release without a version is not known to be older.
+    internal static bool IsOlderThanInstallable(Version? version) => version != null
+        && new Version(version.Major, version.Minor, Math.Max(version.Build, 0), Math.Max(version.Revision, 0)) < OldestInstallable;
 
     // After a change, the release cache keeps what the copies use and the newest of each channel. A failure here leaves
     // releases cached and nothing worse, so the change stands.

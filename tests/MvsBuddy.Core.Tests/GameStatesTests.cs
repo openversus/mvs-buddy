@@ -763,6 +763,31 @@ public sealed class GameStatesTests : IDisposable
         Assert.True(buddy.States.CanUndo(Game()));
     }
 
+    [Theory]
+    [InlineData("2026.9.30.5", true)]
+    [InlineData("2026.10.1", false)]
+    [InlineData("2026.10.01.00", false)]
+    public async Task A_release_older_than_2026_10_01_00_is_refused_before_anything_is_downloaded(string version, bool refused)
+    {
+        Game();
+        var buddy = Buddy();
+        var unchanged = Everything();
+
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release(version, Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }));
+
+        if (refused)
+        {
+            Assert.Equal($"OpenVersus {version} is older than 2026.10.01.00, the oldest release the buddy installs. Pick a newer one.", install.Refused);
+            Assert.Equal(0, Requests("/rel/") + Requests("/paks/"));
+            Assert.Throws<ChangeException>(install.Apply);
+            Assert.Equal(unchanged, Everything());
+        }
+        else
+        {
+            Assert.Null(install.Refused);
+        }
+    }
+
     // Whether the release cache still has a file of these contents (git's name for it: the SHA-1 of "blob <size>\0" and the bytes).
     private bool CacheHas(string contents)
     {
