@@ -52,10 +52,50 @@ internal sealed class ReleaseCache
     internal (int Objects, long Bytes) Prune()
     {
         string states = Path.Combine(DataDirectory(), GameStates.StatesFolder);
-        var borrowers = Directory.Exists(states)
-            ? Directory.EnumerateDirectories(states, "*.git").Where(d => LibGit2Sharp.Repository.IsValid(d)).Select(d => GitStore.Open(d, null, [], log)).ToList()
-            : [];
-        return Store().Prune(borrowers);
+        var folders = Directory.Exists(states) ? Directory.EnumerateDirectories(states, "*.git").ToList() : [];
+        // A copy's states that cannot be read may still use release files: then nothing is pruned.
+        if (folders.FirstOrDefault(d => !LibGit2Sharp.Repository.IsValid(d)) is string unreadable)
+        {
+            log.LogWarning("The release cache is not pruned: {Folder} cannot be read, and its states may use the cache's files", unreadable);
+            return (0, 0);
+        }
+        return Store().Prune(folders.Select(d => GitStore.Open(d, null, [], log)).ToList());
+    }
+
+    /// <summary>
+    /// Keeps the releases <paramref name="inUse"/> names (installed or kept by a copy of the game) and the newest of each
+    /// channel by version (by when it was fetched, without one); the other tags go, each channel's branch names its newest,
+    /// and when a tag went, what nothing reaches any more is deleted (<see cref="Prune"/>). Returns how many tags went.
+    /// </summary>
+    internal int Retain(IReadOnlyCollection<string> inUse)
+    {
+        var store = Store();
+        var tags = store.Tags();
+        var releases = tags.Select(t => (Tag: t.Key, Commit: t.Value, Info: Info(store, store.TreeOf(t.Value)))).ToList();
+        var keep = new HashSet<string>(inUse, StringComparer.Ordinal);
+        foreach (var channel in new[] { Channel.Prod, Channel.Testing })
+        {
+            var newest = releases.Where(r => r.Info?.Channel == channel.ToString())
+                .OrderByDescending(r => System.Version.TryParse(r.Info!.Version, out var version) ? version : null)
+                .ThenByDescending(r => r.Info!.At).FirstOrDefault();
+            if (newest.Tag != null)
+            {
+                keep.Add(newest.Tag);
+                store.SetBranch(BranchOf(channel), newest.Commit);
+            }
+        }
+        var dropped = tags.Keys.Where(t => !keep.Contains(t)).ToList();
+        foreach (string tag in dropped)
+        {
+            store.DeleteTag(tag);
+        }
+        log.LogInformation("Release cache: {Kept} kept, {Dropped} dropped ({Tags})", tags.Count - dropped.Count, dropped.Count, string.Join(", ", dropped));
+        if (dropped.Count > 0)
+        {
+            var (objects, bytes) = Prune();
+            log.LogInformation("Release cache: {Objects} objects deleted, {Bytes} bytes", objects, bytes);
+        }
+        return dropped.Count;
     }
 
     /// <summary>The channel's branch in the cache.</summary>

@@ -763,6 +763,105 @@ public sealed class GameStatesTests : IDisposable
         Assert.True(buddy.States.CanUndo(Game()));
     }
 
+    // Whether the release cache still has a file of these contents (git's name for it: the SHA-1 of "blob <size>\0" and the bytes).
+    private bool CacheHas(string contents)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(contents);
+        string blob = Convert.ToHexString(SHA1.HashData([.. Encoding.ASCII.GetBytes($"blob {bytes.Length}\0"), .. bytes])).ToLowerInvariant();
+        return File.Exists(tree.Path("data", "cache.git", "objects", blob[..2], blob[2..]));
+    }
+
+    [Fact]
+    public async Task The_cache_keeps_what_is_installed_and_the_newest_of_a_channel_by_version_not_by_when_it_was_fetched()
+    {
+        Game();
+        var buddy = Buddy();
+        var cache = buddy.Cache.Store();
+        var v1 = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        var v2 = Release("2026.10.13.2", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        var v3 = Release("2026.10.13.3", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        async Task Install(Release release) => (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), release)).Apply();
+
+        await Install(v1);
+        await Install(v3);
+        // v2 is fetched last, though older than v3.
+        await Install(v2);
+        Assert.Null(cache.Tagged(v1.Tag));
+        Assert.False(CacheHas("asi 2026.10.13.1"));
+        Assert.NotNull(cache.Tagged(v2.Tag));
+        Assert.Equal(cache.Tagged(v3.Tag), cache.Tip("testing"));
+
+        await Install(v3);
+        Assert.NotNull(cache.Tagged(v2.Tag));
+        // Off: v3 is the only one any state names, and the newest.
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal([v3.Tag], cache.Tags().Keys);
+        Assert.Equal(cache.Tagged(v3.Tag), cache.Tip("testing"));
+        Assert.False(CacheHas("asi 2026.10.13.2"));
+        Assert.True(CacheHas("asi 2026.10.13.3"));
+    }
+
+    [Fact]
+    public async Task A_copys_states_that_cannot_be_read_stop_the_cache_dropping_or_deleting_anything()
+    {
+        Game();
+        var buddy = Buddy();
+        var cache = buddy.Cache.Store();
+        var v1 = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), v1)).Apply();
+        Directory.CreateDirectory(tree.Path("data", "states", "unreadable.git"));
+
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.2", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.3", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+
+        Assert.NotNull(cache.Tagged(v1.Tag));
+        // Nothing names v1 now; the unreadable copy might, so its files stay.
+        cache.DeleteTag(v1.Tag);
+        Assert.Equal((0, 0L), buddy.Cache.Prune());
+        Assert.True(CacheHas("asi 2026.10.13.1"));
+    }
+
+    [Fact]
+    public async Task The_cache_keeps_what_another_copy_has_installed()
+    {
+        Game();
+        var buddy = Buddy();
+        var other = new GameInstall(tree.Game("other", "MultiVersus"), GameStore.Steam, FoundBy.SteamLibrary);
+        var v1 = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(other), v1)).Apply();
+
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.2", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.3", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+
+        Assert.NotNull(buddy.Cache.Store().Tagged(v1.Tag));
+        Assert.False((await buddy.Cache.GetAsync(v1)).Downloaded);
+    }
+
+    [Fact]
+    public async Task The_cache_keeps_a_kept_channels_release_and_after_an_uninstall_only_the_newest_of_each()
+    {
+        Game();
+        var buddy = Buddy();
+        var cache = buddy.Cache.Store();
+        var v1 = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        var v2 = Release("2026.10.13.2", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" });
+        var p1 = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        var p2 = Release("2026.10.14.2", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        async Task Install(Release release) => (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), release)).Apply();
+
+        await Install(v2);
+        await Install(v1);
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        await Install(p1);
+        await Install(p2);
+        // v1 is neither installed now, nor undo's, nor the newest: only the kept Testing state names it.
+        Assert.NotNull(cache.Tagged(v1.Tag));
+
+        buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Apply();
+
+        Assert.Equal([v2.Tag, p2.Tag], cache.Tags().Keys.Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public void The_person_can_say_which_channel_a_copy_is_and_the_next_change_files_it_there()
     {

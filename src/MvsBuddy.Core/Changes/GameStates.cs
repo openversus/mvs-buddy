@@ -429,6 +429,7 @@ public sealed class GameStates
             var store = Open(copy);
             Forget(store);
             store.Prune();
+            Retain(report);
         });
     }
 
@@ -980,6 +981,7 @@ public sealed class GameStates
         progress?.Report("Tidying up the buddy's folder...");
         after?.Invoke(store, beforeTree);
         store.Prune();
+        Retain(progress);
         log.LogInformation("{Title}: done for {Folder} in {Seconds:F1} s", title, copy.WorkTree, clock.Elapsed.TotalSeconds);
     }
 
@@ -1028,6 +1030,62 @@ public sealed class GameStates
         path == copy.Prefix + Installer.LicenseName
         || (path.StartsWith(copy.Prefix, StringComparison.Ordinal) && path.IndexOf('/', copy.Prefix.Length) < 0
             && InstallReader.ProxyNames.Contains(path.Substring(copy.Prefix.Length), StringComparer.OrdinalIgnoreCase));
+
+    // After a change, the release cache keeps what the copies use and the newest of each channel. A failure here leaves
+    // releases cached and nothing worse, so the change stands.
+    private void Retain(IProgress<string>? progress)
+    {
+        try
+        {
+            if (TagsInUse() is { } inUse)
+            {
+                progress?.Report("Tidying the release cache...");
+                cache.Retain(inUse);
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is LibGit2Sharp.LibGit2SharpException || e is ChangeException)
+        {
+            log.LogWarning(e, "The release cache was not tidied");
+        }
+    }
+
+    // The releases the copies of the game have installed or keep, as the install records in their states name them: every
+    // copy, every state that can hold OpenVersus. Null when a copy's states cannot be read, so nothing goes on a partial count.
+    private HashSet<string>? TagsInUse()
+    {
+        var tags = new HashSet<string>(StringComparer.Ordinal);
+        string folder = Path.Combine(host.DataDirectory, StatesFolder);
+        if (!Directory.Exists(folder))
+        {
+            return tags;
+        }
+        foreach (string gitDir in Directory.EnumerateDirectories(folder, "*.git"))
+        {
+            if (!LibGit2Sharp.Repository.IsValid(gitDir))
+            {
+                log.LogWarning("The release cache is not tidied: {Folder} cannot be read", gitDir);
+                return null;
+            }
+            var store = GitStore.Open(gitDir, null, [], log);
+            foreach (string branch in new[] { CurrentBranch, PreviousBranch, ReleaseCache.BranchOf(Channel.Prod), ReleaseCache.BranchOf(Channel.Testing), InitialBranch })
+            {
+                if (store.Tip(branch) is not string tip)
+                {
+                    continue;
+                }
+                string tree = store.TreeOf(tip);
+                // The record's place: in a recognised install's Win64, or at the top of a folder the person chose.
+                foreach (string prefix in new[] { "MultiVersus/Binaries/Win64/", "" })
+                {
+                    if (store.Read(tree, prefix + Home + InstallRecord.FileName) is byte[] json && InstallRecord.FromJson(json)?.Tag is string tag)
+                    {
+                        tags.Add(tag);
+                    }
+                }
+            }
+        }
+        return tags;
+    }
 
     private static void Point(GitStore store, string branch, string? commit)
     {
