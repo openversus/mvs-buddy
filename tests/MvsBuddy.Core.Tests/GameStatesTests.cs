@@ -483,8 +483,10 @@ public sealed class GameStatesTests : IDisposable
     public async Task The_first_change_keeps_initial_and_the_states_do_not_start_tracking_what_it_holds()
     {
         ModdedEverywhere();
+        // Another plugin, which no change touches: only `initial` holds it.
+        string other = "MultiVersus/Binaries/Win64/plugins/Other.asi";
+        tree.File("other plugin", [.. Rel(Root), .. other.Split('/')]);
         var buddy = Buddy();
-        string mvsi = "MultiVersus/Binaries/Win64/plugins/MVSIASI.asi";
 
         (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
 
@@ -498,6 +500,7 @@ public sealed class GameStatesTests : IDisposable
             "MultiVersus/Binaries/Win64/plugins/OpenVersus/OpenVersus.toml",
             "MultiVersus/Binaries/Win64/plugins/OpenVersus/OpenVersus_2026.10.12.1.asi",
             "MultiVersus/Binaries/Win64/plugins/OpenVersus/node/linux-x64/OVS.Rollback.Node",
+            "MultiVersus/Binaries/Win64/plugins/Other.asi",
             "MultiVersus/Binaries/Win64/version.dll",
         ], store.Paths(store.TreeOf(initial)).Order(StringComparer.Ordinal));
         string message = store.Describe(initial).Message;
@@ -505,23 +508,24 @@ public sealed class GameStatesTests : IDisposable
         Assert.Contains("\nloader\tversion.dll\t", message);
         Assert.Equal([("OVS_P.pak", (string?)null), ("MVSI_Content_P.pak", "MultiVersus/Content/Paks")],
             GameStates.PaksIn(message).Select(p => (p.Name, p.Home)));
-        // The states track what they did before: not MVS Infinite's plugin, which only `initial` holds.
-        Assert.DoesNotContain(mvsi, store.Paths(store.TreeOf(store.Tip("current")!)));
-        Assert.DoesNotContain(mvsi, store.Paths(store.TreeOf(store.Tip("previous")!)));
+        // The states track what they did before, not what only `initial` holds.
+        Assert.DoesNotContain(other, store.Paths(store.TreeOf(store.Tip("current")!)));
+        Assert.DoesNotContain(other, store.Paths(store.TreeOf(store.Tip("previous")!)));
 
         buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
         Assert.Equal(initial, States(buddy).Tip("initial"));
-        Assert.True(File.Exists(Path.Combine(Root, mvsi)));
+        Assert.True(File.Exists(Path.Combine(Root, other)));
     }
 
     [Fact]
     public async Task Rolling_back_puts_back_the_first_look_with_what_a_clean_start_set_aside_and_keeps_what_was_added_since()
     {
-        var extras = ModdedEverywhere();
+        ModdedEverywhere();
         var buddy = Buddy();
         var first = Everything();
+        // The install sets MVS Infinite aside: it cannot run with OpenVersus.
         (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
-        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras.Where(e => e.Kind == ExtraKind.MvsInfinite)).Apply();
+        Assert.Contains(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.MvsInfinite);
         string later = tree.File("later", [.. Rel(Root), "later.txt"]);
         var before = Everything();
 
@@ -568,6 +572,83 @@ public sealed class GameStatesTests : IDisposable
         var roll = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
         Assert.Contains("OVS_P.pak", roll.Refused);
         Assert.Throws<ChangeException>(roll.Apply);
+    }
+
+    private int UltimateAsiLoaders(Buddy buddy) => buddy.Installs.Read(Game()).Loaders.Count(l => l.IsUltimateAsiLoader);
+
+    private IEnumerable<(SetAsideKind, Channel?)> Aside(Buddy buddy) => buddy.States.SetAsideOf(buddy.Installs.Read(Game())).Select(a => (a.Kind, a.Channel));
+
+    [Fact]
+    public async Task Switching_between_mvs_infinite_and_openversus_sets_the_other_aside_and_keeps_one_loader()
+    {
+        ModdedEverywhere();
+        var buddy = Buddy();
+        string mvsiPlugin = Path.Combine(Win64, "plugins", "MVSIASI.asi");
+        string mvsiPak = Path.Combine(Root, "MultiVersus", "Content", "Paks", "MVSI_Content_P.pak");
+
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }));
+        Assert.Contains("MVS Infinite: 1 file set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back with its paks.", install.Summary);
+        install.Apply();
+        Assert.False(File.Exists(mvsiPlugin) || File.Exists(mvsiPak));
+        Assert.Equal([(SetAsideKind.MvsInfinite, (Channel?)null)], Aside(buddy));
+        var installed = Everything();
+
+        var toMvsi = buddy.States.PrepareSwitchToMvsInfinite(buddy.Installs.Read(Game()));
+        Assert.Contains("OpenVersus Testing: set aside; \"Switch to OpenVersus Testing\" brings it back as it is now, with its paks.", toMvsi.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: MVS Infinite loads through it.", toMvsi.Summary);
+        toMvsi.Apply();
+        Assert.Equal(("mvsi asi", "mvsi pak"), (Read(mvsiPlugin), Read(mvsiPak)));
+        Assert.Equal(ModLayout.None, buddy.Installs.Read(Game()).Mod.Layout);
+        Assert.Equal(1, UltimateAsiLoaders(buddy));
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Testing)], Aside(buddy));
+        var onMvsi = Everything();
+
+        buddy.States.PrepareSwitchToOpenVersus(buddy.Installs.Read(Game()), Channel.Testing).Apply();
+        Assert.Equal(installed, Everything());
+        Assert.Equal(1, UltimateAsiLoaders(buddy));
+        Assert.Equal([(SetAsideKind.MvsInfinite, (Channel?)null)], Aside(buddy));
+
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(onMvsi, Everything());
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Testing)], Aside(buddy));
+    }
+
+    [Fact]
+    public async Task Switching_to_mvs_infinite_leaves_out_the_loader_it_was_set_aside_with_when_another_is_live()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
+        // MVS Infinite added by hand, then both set aside: the buddy's loader goes with them, a copy in each.
+        string mvsi = tree.File("mvsi asi", [.. Rel(Win64), "plugins", "MVSIASI.asi"]);
+        string asi = Path.Combine(Home, "OpenVersus_2026.10.13.1.asi");
+        StockExtra Extra(string file, ExtraKind kind) => new(file, Path.GetRelativePath(Root, file), new FileInfo(file).Length, kind);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), [Extra(asi, ExtraKind.OpenVersus), Extra(mvsi, ExtraKind.MvsInfinite)]).Apply();
+        Assert.Equal(0, UltimateAsiLoaders(buddy));
+        // OpenVersus Prod, installed with the loader under another name.
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }),
+            new InstallOptions { LoaderName = "xinput1_3.dll" })).Apply();
+
+        buddy.States.PrepareSwitchToMvsInfinite(buddy.Installs.Read(Game())).Apply();
+
+        Assert.Equal(["xinput1_3.dll"], buddy.Installs.Read(Game()).Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.FileName));
+        Assert.True(File.Exists(mvsi));
+    }
+
+    [Fact]
+    public async Task Without_mvs_infinite_nothing_says_it_and_there_is_nothing_to_switch_to()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }));
+        Assert.DoesNotContain(install.Summary, s => s.Contains("MVS Infinite", StringComparison.Ordinal));
+        install.Apply();
+        var off = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
+        Assert.DoesNotContain(off.Summary, s => s.Contains("MVS Infinite", StringComparison.Ordinal));
+        off.Apply();
+
+        Assert.NotNull(buddy.States.PrepareSwitchToMvsInfinite(buddy.Installs.Read(Game())).Refused);
+        Assert.DoesNotContain(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.MvsInfinite);
     }
 
     [Fact]

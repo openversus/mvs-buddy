@@ -235,6 +235,12 @@ public sealed class GameStates
             summary.Add($"{state.Game.Win64Directory} does not exist yet; it will be made.");
         }
         summary.AddRange(ChannelLines(state, copy, release.Channel));
+        // MVS Infinite cannot run with OpenVersus: an install sets it aside in the same change.
+        var mvsi = LiveMvsInfinite(state, copy);
+        if (mvsi.Count > 0)
+        {
+            summary.Add(MvsInfiniteAsideLine(mvsi.Count));
+        }
 
         // Settings: written when the release ships its own or the person has some.
         string theirsPath = Path.Combine(state.Game.Win64Directory, "plugins", InstallReader.ModFolder, InstallReader.SettingsFile);
@@ -272,7 +278,8 @@ public sealed class GameStates
             ? $"Ultimate ASI Loader {pin.Version} is already in place as {loaderName}."
             : $"Ultimate ASI Loader {pin.Version} as {loaderName}"
                 + (otherLoaders.Count > 0 ? $"; the other copy ({string.Join(", ", otherLoaders.Select(l => l.FileName))}) goes, as one is enough." : "."));
-        summary.AddRange(PakLines(state, copy, staged.Select(p => new PakAt(p.Name, p.Path, p.Home)).Concat(LivePaths(state, copy).Where(p => p.Home != null))));
+        summary.AddRange(PakLines(state, copy, staged.Select(p => new PakAt(p.Name, p.Path, p.Home))
+            .Concat(mvsi.Count > 0 ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
         var notChecked = (cached.ZipChecked ? Array.Empty<string>() : new[] { release.InstallZip!.Name }).Concat(staged.Where(p => !p.Checked).Select(p => p.Name)).ToList();
         if (notChecked.Count > 0)
         {
@@ -307,9 +314,12 @@ public sealed class GameStates
 
         return new PreparedChange(summary, merge, refused, report => Change(report, state.Game, $"before OpenVersus {version} ({release.Channel}) was installed",
             $"OpenVersus {version} ({release.Channel})", refused,
-            // The release's paks; MVS Infinite's stay where they are.
-            (_, live) => [.. staged, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
-            (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes))));
+            // The release's paks; MVS Infinite's stay where they are, unless it is set aside: then they leave as its set.
+            (_, live) => [.. staged, .. live.Where(p => p.Home != null && mvsi.Count == 0).Select(p => p.InPlace)],
+            (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes)
+                .Concat(mvsi.Select(p => (TreeEdit)new Removal(p)))),
+            (store, before) => SetMvsInfiniteAside(store, before, mvsi),
+            mvsi));
     }
 
     /// <summary>
@@ -658,12 +668,19 @@ public sealed class GameStates
     /// live here (its version, settings and saved state), and its paks from the buddy's set. Nothing is downloaded; a pak
     /// that is no longer kept is a reason it cannot be turned on as it was.
     /// </summary>
-    public PreparedChange PrepareTurnOn(InstallState state, Channel channel, IProgress<string>? progress = null)
+    public PreparedChange PrepareTurnOn(InstallState state, Channel channel, IProgress<string>? progress = null) =>
+        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: false);
+
+    /// <summary>
+    /// Gets switching from MVS Infinite to OpenVersus <paramref name="channel"/> ready: OpenVersus turned on as in
+    /// <see cref="PrepareTurnOn"/>, and MVS Infinite, which cannot run with it, set aside in the same change (its plugins
+    /// and paks; an earlier one set aside is replaced). <see cref="PrepareSwitchToMvsInfinite"/> switches back.
+    /// </summary>
+    public PreparedChange PrepareSwitchToOpenVersus(InstallState state, Channel channel, IProgress<string>? progress = null) =>
+        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: true);
+
+    private PreparedChange TurnOn(InstallState state, Channel channel, IProgress<string>? progress, bool setMvsInfiniteAside)
     {
-        if (state == null)
-        {
-            throw new ArgumentNullException(nameof(state));
-        }
         var copy = Layout(state.Game);
         string? last = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(ReleaseCache.BranchOf(channel)) : null;
         var store = Open(copy);
@@ -683,14 +700,92 @@ public sealed class GameStates
         {
             summary.Add($"The OpenVersus here ({live.Channel}) is kept as it is, for turning it on again.");
         }
-        summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home)).Concat(LivePaths(state, copy).Where(p => p.Home != null))));
+        var mvsi = setMvsInfiniteAside ? LiveMvsInfinite(state, copy) : [];
+        if (mvsi.Count > 0)
+        {
+            summary.Add(MvsInfiniteAsideLine(mvsi.Count));
+        }
+        summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
+            .Concat(mvsi.Count > 0 ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         // A loader the copy keeps (one was here at first sight) is taken out only when the state brings one back.
         bool keepLoaders = KeepsLoaders(state, copy) && !owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, $"before OpenVersus {channel} was turned on", $"OpenVersus {channel}, turned on", refused,
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game,
+            mvsi.Count > 0 ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
+            mvsi.Count > 0 ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", refused,
+            // MVS Infinite's paks stay where they are, unless it is set aside: then they leave as its set.
+            (_, live) => [.. found, .. live.Where(p => p.Home != null && mvsi.Count == 0).Select(p => p.InPlace)],
+            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p))).Concat(mvsi)
+                .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned))),
+            (store, before) => SetMvsInfiniteAside(store, before, mvsi),
+            mvsi));
+    }
+
+    /// <summary>
+    /// Gets switching from OpenVersus to MVS Infinite, which is set aside, ready: OpenVersus set aside as its channel's
+    /// kept state (as by <see cref="PrepareTurnOff"/>), and MVS Infinite's plugins and paks put back in the same change.
+    /// The loader stays: MVS Infinite runs on any build, so the copy it was set aside with stays out when one is live.
+    /// </summary>
+    public PreparedChange PrepareSwitchToMvsInfinite(InstallState state, IProgress<string>? progress = null)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        var copy = Layout(state.Game);
+        string? tip = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(MvsInfiniteBranch) : null;
+        var wanted = paks.Read(MvsInfinitePaks);
+        if (tip == null && wanted.Count == 0)
+        {
+            const string nothing = "Nothing of MVS Infinite is set aside for this copy of the game.";
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
+        }
+        var store = Open(copy);
+        string? tree = tip == null ? null : store.TreeOf(tip);
+        bool loaderLive = state.Loaders.Any(l => l.IsUltimateAsiLoader);
+        var paths = tree == null ? [] : store.Paths(tree).Where(p => !(loaderLive && IsLoaderPath(copy, p))).ToList();
+        var found = Find(state, copy, wanted, progress, out string? refused);
+        var ovsPaths = WhatGoes(state, copy, openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true, keepLoaders: true).OpenVersus;
+
+        var summary = new List<string>();
+        if (state.Channel is { } live && state.Mod.Layout != ModLayout.None)
+        {
+            summary.Add($"OpenVersus {live.Channel}: set aside; \"Switch to OpenVersus {live.Channel}\" brings it back as it is now, with its paks.");
+        }
+        summary.Add($"MVS Infinite: {paths.Count} {Files(paths.Count)}{(found.Count > 0 ? $" and {found.Count} {Paks(found.Count)}" : "")} go back where they were.");
+        if (loaderLive)
+        {
+            summary.Add("Ultimate ASI Loader stays: MVS Infinite loads through it.");
+        }
+        if (state.Mod.Files.Any(f => f.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar)))
+        {
+            summary.Add("The mod's logs stay in plugins/OpenVersus/logs: they are never part of a state.");
+        }
+        summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
+        log.LogInformation("Switch to MVS Infinite prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before switching to MVS Infinite", "Switched to MVS Infinite", refused,
+            // OpenVersus's paks leave as its channel's set; MVS Infinite's come back.
             (_, live) => [.. found, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
-            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p)))
-                .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned)))));
+            (store, _, before) => store.Edit(before, ovsPaths.Select(p => (TreeEdit)new Removal(p)).Concat(tree == null ? [] : Grafts(store, tree, paths))),
+            (store, _) => store.DeleteBranch(MvsInfiniteBranch),
+            paths));
+    }
+
+    // MVS Infinite live here, as the store names its plugins: only by a plugin of its name, never by the paks alone, whose
+    // names are a guess and could be another mod's. Its paks go with it as the paks the reader takes to be its.
+    private static List<string> LiveMvsInfinite(InstallState state, CopyLayout copy) =>
+        state.OtherPlugins.Where(p => p.IsMvsInfinite).Select(p => Relative(copy, p.Path)).OfType<string>().ToList();
+
+    private static string MvsInfiniteAsideLine(int files) =>
+        $"MVS Infinite: {files} {Files(files)} set aside, since it cannot run with OpenVersus; \"Switch to MVS Infinite\" brings it back with its paks.";
+
+    // MVS Infinite's plugins, as they were before the change, as the state set aside; one set aside before is replaced whole.
+    private static void SetMvsInfiniteAside(GitStore store, string before, IReadOnlyList<string> plugins)
+    {
+        if (plugins.Count > 0)
+        {
+            store.Commit(MvsInfiniteBranch, store.Edit(null, Grafts(store, before, plugins)), "MVS Infinite, set aside");
+        }
     }
 
     /// <summary>

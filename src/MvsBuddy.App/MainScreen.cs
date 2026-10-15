@@ -331,8 +331,12 @@ internal sealed class MainScreen
         {
             foreach (var channel in KeptChannels())
             {
-                rml.Append(Button($"Turn OpenVersus {channel} on", () => Prepare($"Turn OpenVersus {channel} on?",
-                    progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
+                // With MVS Infinite here, turning OpenVersus on is a switch: MVS Infinite is set aside in the same change.
+                rml.Append(MvsInfiniteLive(s)
+                    ? Button($"Switch to OpenVersus {channel}", () => Prepare($"Switch to OpenVersus {channel}?",
+                        progress => buddy.States.PrepareSwitchToOpenVersus(s, channel, progress), $"Switched to OpenVersus {channel}."), "primary")
+                    : Button($"Turn OpenVersus {channel} on", () => Prepare($"Turn OpenVersus {channel} on?",
+                        progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
             }
         }
         if (canUndo)
@@ -533,6 +537,10 @@ internal sealed class MainScreen
         Show(rml.ToString());
     }
 
+    // MVS Infinite is live: a plugin of its name, which the reader finds only when it is there. Every switch button hangs
+    // on this or on MVS Infinite being set aside, so a copy without it shows nothing of it.
+    private static bool MvsInfiniteLive(InstallState s) => s.OtherPlugins.Any(p => p.IsMvsInfinite);
+
     // OpenVersus of a channel that is kept for this copy and not live now: turning it on brings it back as it was.
     private IEnumerable<Channel> KeptChannels() => kept.Where(k => k.Kind == SetAsideKind.OpenVersus).Select(k => k.Channel!.Value);
 
@@ -540,7 +548,7 @@ internal sealed class MainScreen
     {
         InstallStatus.Installed => $"OpenVersus {Version(s)}{ChannelName(s)} is installed.",
         InstallStatus.LoaderMissing => $"OpenVersus {Version(s)}{ChannelName(s)} is here, but the loader it needs is missing.",
-        _ when KeptChannels().Any() => "OpenVersus is turned off.",
+        _ when KeptChannels().Any() => MvsInfiniteLive(s) ? "MVS Infinite is on; OpenVersus is turned off." : "OpenVersus is turned off.",
         InstallStatus.LoaderOnly => "OpenVersus is not installed; only its loader is here.",
         _ => "OpenVersus is not installed.",
     };
@@ -721,8 +729,12 @@ internal sealed class MainScreen
             string files = $"{k.Files:N0} {(k.Files == 1 ? "file" : "files")}";
             rml.Append($"<div class=\"release\"><span class=\"strong\">{Html.Text(name)}</span> <span class=\"muted\">"
                 + (k.At > DateTimeOffset.MinValue ? $"{k.At.LocalDateTime:yyyy-MM-dd}, " : "") + $"{files}, {Size(k.Bytes)}</span> ");
-            rml.Append(Button("Put back", () => Prepare(mvsi ? "Put MVS Infinite back?" : "Put back what a clean start set aside?",
-                progress => buddy.States.PreparePutBack(s, kind, progress), $"{name} is back."), "small"));
+            // With OpenVersus on, MVS Infinite comes back as a switch: OpenVersus is set aside in the same change.
+            rml.Append(mvsi && s.Mod.Layout != ModLayout.None && !MvsInfiniteLive(s)
+                ? Button("Switch to MVS Infinite", () => Prepare("Switch to MVS Infinite?",
+                    progress => buddy.States.PrepareSwitchToMvsInfinite(s, progress), "Switched to MVS Infinite."), "small")
+                : Button("Put back", () => Prepare(mvsi ? "Put MVS Infinite back?" : "Put back what a clean start set aside?",
+                    progress => buddy.States.PreparePutBack(s, kind, progress), $"{name} is back."), "small"));
             rml.Append(Button("Delete for good", () => ConfirmDiscard(mvsi ? "MVS Infinite" : "what a clean start set aside",
                 $"Its {files} ({Size(k.Bytes)}) {(k.Files == 1 ? "is" : "are")} deleted from the buddy's folder: Put back cannot bring them back after this.",
                 $"{name} was deleted.", () => buddy.States.Discard(s.Game, kind)), "small")).Append("</div>");
