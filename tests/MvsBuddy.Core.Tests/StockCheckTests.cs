@@ -167,6 +167,27 @@ public sealed class StockCheckTests : IDisposable
         Assert.DoesNotContain("MultiVersus/Binaries/Win64/dxgi.dll", store.Paths(store.TreeOf(store.Tip("current")!)));
     }
 
+    private List<string> Listing() => Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories)
+        .Select(f => $"{Path.GetRelativePath(Root, f)} {File.ReadAllText(f).GetHashCode()}").Order(StringComparer.Ordinal).ToList();
+
+    [Fact]
+    public void With_the_manifests_a_roll_back_after_a_clean_start_puts_back_everything_the_game_did_not_ship()
+    {
+        Crowded();
+        var buddy = Buddy();
+        var first = Listing();
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        var state = buddy.Installs.Read(Game());
+        buddy.States.PrepareSetAside(state, buddy.Stock.Read(state).Extras).Apply();
+        Assert.NotEqual(first, Listing());
+
+        buddy.States.PrepareRollBack(buddy.Installs.Read(Game())).Apply();
+
+        Assert.Equal(first, Listing());
+        // MVS Infinite and the rest are back, and the OpenVersus here is the live one again: nothing is set aside or kept.
+        Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
+    }
+
     [Fact]
     public void Setting_openversus_aside_while_mvs_infinite_stays_keeps_the_loader_it_loads_through()
     {

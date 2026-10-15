@@ -764,6 +764,85 @@ public sealed class GameStates
         store.Prune();
     }
 
+    /// <summary>When the buddy first changed <paramref name="game"/>'s copy, which a roll-back goes back to; null when it has no first look of it.</summary>
+    public DateTimeOffset? FirstLookOf(GameInstall game)
+    {
+        var copy = Layout(game ?? throw new ArgumentNullException(nameof(game)));
+        return LibGit2Sharp.Repository.IsValid(copy.GitDir) && Open(copy).Tip(InitialBranch) is string initial ? Open(copy).Describe(initial).At : null;
+    }
+
+    /// <summary>
+    /// Gets rolling back to how this copy was the first time the buddy changed it ready: the files it had then come back as
+    /// they were, with their paks (found by checksum, never downloaded); the mod's files, the loader and its license that
+    /// were not here then go; other files added since stay. What a clean start had set aside of it is back, so it is not
+    /// set aside any more. An ordinary change: undo puts everything back as it is now.
+    /// </summary>
+    public PreparedChange PrepareRollBack(InstallState state, IProgress<string>? progress = null)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        var copy = Layout(state.Game);
+        string? initial = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(InitialBranch) : null;
+        if (initial == null)
+        {
+            const string nothing = "The buddy has no first look at this copy to roll back to: it began keeping one after this copy was first changed.";
+            return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
+        }
+        var store = Open(copy);
+        var (message, at) = store.Describe(initial);
+        string tree = store.TreeOf(initial);
+        var paths = store.Paths(tree);
+        var had = new HashSet<string>(paths, StringComparer.Ordinal);
+        var found = Find(state, copy, PaksIn(message), progress, out string? refused);
+        var foundPaths = new HashSet<string>(found.Select(p => p.Path), host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var asideNow = SetBranches.Select(store.Tip).OfType<string>().SelectMany(t => store.Paths(store.TreeOf(t)));
+
+        var summary = new List<string> { $"Puts back the {paths.Count} {Files(paths.Count)} this copy had the first time the buddy changed it, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
+        if (message.Split('\n').Contains(CoversLine + "\trecognised"))
+        {
+            summary.Add("The game's manifests were missing then, so that is only what the buddy recognised: the mod, loaders and other plugins.");
+        }
+        summary.Add("The mod's files, the loader and its license that were not here then go.");
+        summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
+            .Concat(LivePaths(state, copy).Where(p => p.Home != null && !foundPaths.Contains(p.Path)))));
+        if (asideNow.Any(had.Contains))
+        {
+            summary.Add("What a clean start set aside of it comes back, so it is not set aside any more.");
+        }
+        summary.Add("Other files added since stay.");
+        summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
+        log.LogInformation("Roll back prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
+
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before a roll back to the first look", "Rolled back to the first look", refused,
+            // Its paks; MVS Infinite's added since stay where they are.
+            (_, live) => [.. found, .. live.Where(p => p.Home != null && !foundPaths.Contains(p.Path)).Select(p => p.InPlace)],
+            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, tree, paths))),
+            (store, _) =>
+            {
+                // What is back is not set aside any more; undo sets it aside again.
+                foreach (string branch in SetBranches)
+                {
+                    if (store.Tip(branch) is string tip)
+                    {
+                        string held = store.TreeOf(tip);
+                        var back = store.Paths(held).Where(had.Contains).ToList();
+                        if (back.Count == store.Paths(held).Count)
+                        {
+                            store.DeleteBranch(branch);
+                        }
+                        else if (back.Count > 0)
+                        {
+                            store.Commit(branch, store.Edit(held, back.Select(p => (TreeEdit)new Removal(p))), "Set aside, less what a roll back brought back");
+                        }
+                    }
+                }
+            },
+            // Its files that are here now untracked (MVS Infinite's plugin) are recorded first, so they are not in the way and undo has them.
+            paths));
+    }
+
     /// <summary>What is set aside for <paramref name="state"/>'s copy, and can be put back or turned on.</summary>
     public IReadOnlyList<SetAside> SetAsideOf(InstallState state)
     {

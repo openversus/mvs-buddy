@@ -515,6 +515,62 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task Rolling_back_puts_back_the_first_look_with_what_a_clean_start_set_aside_and_keeps_what_was_added_since()
+    {
+        var extras = ModdedEverywhere();
+        var buddy = Buddy();
+        var first = Everything();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras.Where(e => e.Kind == ExtraKind.MvsInfinite)).Apply();
+        string later = tree.File("later", [.. Rel(Root), "later.txt"]);
+        var before = Everything();
+
+        var roll = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
+        Assert.Null(roll.Refused);
+        Assert.Contains("What a clean start set aside of it comes back, so it is not set aside any more.", roll.Summary);
+        roll.Apply();
+
+        // The mod by hand, its older loader, its paks, MVS Infinite with its pak: every byte and mode; the file added since stays.
+        Assert.Equal(first, Without(Everything(), "later.txt"));
+        Assert.Equal("later", Read(later));
+        Assert.DoesNotContain(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.MvsInfinite);
+
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(before, Everything());
+        Assert.Contains(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), a => a.Kind == SetAsideKind.MvsInfinite);
+    }
+
+    [Fact]
+    public async Task Rolling_back_right_after_an_install_is_not_stopped_by_the_first_looks_own_files_still_here()
+    {
+        ModdedEverywhere();
+        var buddy = Buddy();
+        var first = Everything();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+        Assert.NotNull(buddy.States.FirstLookOf(Game()));
+
+        // MVS Infinite's plugin is here and no state tracks it: it is the first look's own, not in the way.
+        buddy.States.PrepareRollBack(buddy.Installs.Read(Game())).Apply();
+
+        Assert.Equal(first, Everything());
+    }
+
+    [Fact]
+    public void A_roll_back_needs_a_first_look_and_its_paks()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        Assert.Null(buddy.States.FirstLookOf(Game()));
+        Assert.NotNull(buddy.States.PrepareRollBack(buddy.Installs.Read(Game())).Refused);
+
+        // An uninstall deletes the paks for good, so the hand install's cannot come back.
+        buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Apply();
+        var roll = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
+        Assert.Contains("OVS_P.pak", roll.Refused);
+        Assert.Throws<ChangeException>(roll.Apply);
+    }
+
+    [Fact]
     public void What_a_clean_start_set_aside_comes_back_part_by_part()
     {
         var extras = ModdedEverywhere();

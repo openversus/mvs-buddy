@@ -34,6 +34,7 @@ internal sealed class MainScreen
     private string? cleanStartUnavailable;
     private IReadOnlyList<SetAside> kept = [];
     private bool canUndo;
+    private DateTimeOffset? firstLook;
     private bool picking;
 
     public MainScreen(RmlWindow window, UiThread ui, Buddy buddy, string version, ILogger log)
@@ -294,10 +295,10 @@ internal sealed class MainScreen
         ui.Run(() =>
         {
             var read = buddy.Installs.Read(copy);
-            return Task.FromResult((read, buddy.Stock.Unavailable(read), buddy.States.SetAsideOf(read), buddy.States.CanUndo(copy)));
+            return Task.FromResult((read, buddy.Stock.Unavailable(read), buddy.States.SetAsideOf(read), buddy.States.CanUndo(copy), buddy.States.FirstLookOf(copy)));
         }, read =>
         {
-            (state, cleanStartUnavailable, kept, canUndo) = read;
+            (state, cleanStartUnavailable, kept, canUndo, firstLook) = read;
             ShowGame();
         }, Failed);
     }
@@ -338,9 +339,10 @@ internal sealed class MainScreen
         {
             rml.Append(Button("Undo the last change", () => Prepare("Undo the last change?", progress => buddy.States.PrepareUndo(s, progress), "The last change was undone.")));
         }
-        if (s.Mod.Layout != ModLayout.None || KeptChannels().Any() || s.Paks.Count + s.PaksInGame.Count > 0)
+        bool openVersusHere = s.Mod.Layout != ModLayout.None || KeptChannels().Any() || s.Paks.Count + s.PaksInGame.Count > 0;
+        if (openVersusHere || firstLook != null)
         {
-            rml.Append(Button("Uninstall", () => Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(s), "OpenVersus was uninstalled.")));
+            rml.Append(Button(openVersusHere ? "Uninstall" : "Roll back...", () => ChooseUninstall(s, openVersusHere)));
         }
         rml.Append(Button("Check again", () =>
         {
@@ -503,6 +505,32 @@ internal sealed class MainScreen
         {
             Failed(e);
         }
+    }
+
+    // Uninstalling OpenVersus, or, when the buddy kept a first look at this copy, rolling the copy back to it instead.
+    private void ChooseUninstall(InstallState s, bool openVersusHere)
+    {
+        void Uninstall() => Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(s), "OpenVersus was uninstalled.");
+        if (firstLook is not { } at)
+        {
+            Uninstall();
+            return;
+        }
+        actions.Clear();
+        var rml = new StringBuilder(openVersusHere ? "<h2>Uninstall</h2>" : "<h2>Roll back</h2>");
+        if (openVersusHere)
+        {
+            rml.Append("<div class=\"card\"><p class=\"strong\">Uninstall OpenVersus</p><p class=\"muted\">Its files and paks are deleted, with every "
+                + "channel kept for this copy. There is no undo.</p>")
+                .Append(Button("Uninstall OpenVersus", Uninstall, "primary")).Append("</div>");
+        }
+        rml.Append("<div class=\"card\"><p class=\"strong\">Roll back to how it was the first time</p>")
+            .Append($"<p class=\"muted\">This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before the buddy first changed it: what it had then comes back, "
+                + "the mod's files and the loader that were not here then go, and other files added since stay. Undo can undo it.</p>")
+            .Append(Button("Roll back", () => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(s, progress),
+                "This copy is back to how it was the first time."), openVersusHere ? "" : "primary")).Append("</div>");
+        rml.Append($"<div class=\"actions\">{Button("Cancel", ShowGame)}</div>");
+        Show(rml.ToString());
     }
 
     // OpenVersus of a channel that is kept for this copy and not live now: turning it on brings it back as it was.
