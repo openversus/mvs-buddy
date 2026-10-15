@@ -38,7 +38,7 @@ public sealed class GameFinder
         {
             SteamFromRegistry(found);
         }
-        foreach (string steam in SteamRoots())
+        foreach (string steam in SteamRoots(host))
         {
             SteamLibraries(steam, found);
         }
@@ -193,7 +193,8 @@ public sealed class GameFinder
         }
     }
 
-    private IEnumerable<string> SteamRoots()
+    /// <summary>Where Steam itself may be installed on <paramref name="host"/>: its registry entries and Program Files on Windows; native, the old <c>~/.steam</c> link, Flatpak and Snap on Linux. Not all exist.</summary>
+    internal static IEnumerable<string> SteamRoots(HostSystem host)
     {
         if (host.IsWindows)
         {

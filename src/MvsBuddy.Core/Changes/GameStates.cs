@@ -391,6 +391,122 @@ public sealed class GameStates
     }
 
     /// <summary>
+    /// The Steam accounts on this machine whose launch options for the game the buddy can read: what they say now, and
+    /// whether they tell Wine to load the loader (<see cref="LaunchOptionsDlls"/>) from the game's folder. The accounts
+    /// the game has run under; when it has run under none and there is one account, that one. Empty on Windows, for a
+    /// copy that is not Steam's, and when Steam's folder is nowhere the buddy looks.
+    /// </summary>
+    public IReadOnlyList<LaunchOptionsAccount> LaunchOptionsAccounts(InstallState state)
+    {
+        if (state == null)
+        {
+            throw new ArgumentNullException(nameof(state));
+        }
+        if (host.IsWindows || state.Game.Store != GameStore.Steam)
+        {
+            return [];
+        }
+        var dlls = LaunchOptionsDlls(state);
+        var read = new List<(LaunchOptionsAccount Account, bool HasApp)>();
+        foreach (string root in GameFinder.SteamRoots(host).Where(Directory.Exists).Select(host.RealPath).Distinct(StringComparer.Ordinal))
+        {
+            foreach (var account in SteamLaunchOptions.Accounts(root))
+            {
+                try
+                {
+                    string text = ReadText(account.LocalConfig);
+                    if (SteamLaunchOptions.Read(text, GameFiles.SteamAppId) is string options)
+                    {
+                        read.Add((new LaunchOptionsAccount(account.Id, account.Name, options, dlls.All(d => LaunchLine.LoadsNative(options, d))) { File = account.LocalConfig },
+                            SteamLaunchOptions.HasApp(text, GameFiles.SteamAppId)));
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException || e is DecoderFallbackException)
+                {
+                    log.LogInformation("Skipped {File}: {Reason}", account.LocalConfig, e.Message);
+                }
+            }
+        }
+        var ran = read.Where(r => r.HasApp).Select(r => r.Account).ToList();
+        return ran.Count > 0 || read.Count != 1 ? ran : [read[0].Account];
+    }
+
+    /// <summary>
+    /// The DLL names (without <c>.dll</c>) the launch options setting names: each live copy of Ultimate ASI Loader, or
+    /// <c>version</c>, the name an install under Proton gives it, when there is none yet.
+    /// </summary>
+    public static IReadOnlyList<string> LaunchOptionsDlls(InstallState state) =>
+        state == null ? throw new ArgumentNullException(nameof(state)) : LiveLoaderDlls(state).Distinct().DefaultIfEmpty("version").ToList();
+
+    /// <summary>
+    /// Gets turning the Steam launch options setting on or off for <paramref name="account"/> ready. On puts
+    /// <c>WINEDLLOVERRIDES</c> with the loader's name native first into the game's launch options: into an assignment
+    /// already there, else at the front, with <c>%command%</c> added when the line has none. Off takes the loader's entry
+    /// out again, and the assignment when nothing else is in it. The rest of the line stays as it is. Refused while Steam
+    /// runs, since it writes the file over when it exits; nothing to undo, the other setting puts it back.
+    /// </summary>
+    public PreparedChange PrepareLaunchOptions(InstallState state, LaunchOptionsAccount account, bool on)
+    {
+        if (state == null || account == null)
+        {
+            throw new ArgumentNullException(state == null ? nameof(state) : nameof(account));
+        }
+        var dlls = LaunchOptionsDlls(state);
+        string now = account.Options;
+        string then = on ? LaunchLine.TurnedOn(now, dlls) : LaunchLine.TurnedOff(now, dlls);
+        string names = string.Join(", ", dlls.Select(d => d + ".dll"));
+        var summary = new List<string>
+        {
+            on ? $"Steam's launch options for MultiVersus ({account.Name}) will tell Wine to load {names} from the game's folder."
+               : $"Steam's launch options for MultiVersus ({account.Name}) will no longer tell Wine to load {names} from the game's folder.",
+            now.Length == 0 ? "Now: no launch options." : $"Now: {now}",
+            then.Length == 0 ? "After: no launch options." : $"After: {then}",
+        };
+        if (then == now)
+        {
+            string same = on ? "The launch options already say so." : "The launch options do not say so.";
+            return new PreparedChange(summary, null, same, _ => throw new ChangeException(same));
+        }
+        if (host.IsSteamRunning())
+        {
+            return new PreparedChange(summary, null, SteamRunningText, _ => throw new ChangeException(SteamRunningText));
+        }
+        return new PreparedChange(summary, null, null, _ => WriteLaunchOptions(account, dlls, on));
+    }
+
+    private const string SteamRunningText = "Steam is running, and writes its launch options over when it exits, so a change made now would be lost. Close Steam first, then set this.";
+
+    // The file as it is at this moment (not as it was read for the screen), changed in one place and put in its place.
+    private void WriteLaunchOptions(LaunchOptionsAccount account, IReadOnlyList<string> dlls, bool on)
+    {
+        if (host.IsSteamRunning())
+        {
+            throw new ChangeException(SteamRunningText);
+        }
+        string text;
+        try
+        {
+            text = ReadText(account.File);
+        }
+        catch (DecoderFallbackException e)
+        {
+            throw new ChangeException($"{account.File} is not UTF-8 text throughout, so the buddy cannot change it without changing other bytes; it is left alone.", e);
+        }
+        string current = SteamLaunchOptions.Read(text, GameFiles.SteamAppId)
+            ?? throw new ChangeException($"{account.File} is not laid out as the buddy expects (no apps block), so it is left alone.");
+        string options = on ? LaunchLine.TurnedOn(current, dlls) : LaunchLine.TurnedOff(current, dlls);
+        string written = account.File + ".mvs-buddy";
+        File.WriteAllBytes(written, Utf8.GetBytes(SteamLaunchOptions.With(text, GameFiles.SteamAppId, options)!));
+        File.Replace(written, account.File, null);
+    }
+
+    // Byte for byte: a byte-order mark, should there be one, is a character of the text and goes back as it was; a byte
+    // that is not UTF-8 would not, so reading it throws rather than writing something else in its place.
+    private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    private static string ReadText(string file) => Utf8.GetString(File.ReadAllBytes(file));
+
+    /// <summary>
     /// Gets undoing the last change ready: the copy as it was before it, files and paks. Undoing again brings back what is
     /// there now. The paks come from the buddy's sets or the profile, by checksum; one that is in neither is a reason the
     /// undo cannot be made, not something to fetch anew.

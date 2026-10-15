@@ -42,8 +42,11 @@ public sealed class GameStatesTests : IDisposable
         LicenseUrl = new Uri("https://example.test/ual/license"),
     };
 
-    private Buddy Buddy(Func<bool>? running = null, Func<string, bool>? wine = null) => new BuddyBuilder().Http(new HttpClient(server)).AsiLoader(Pin())
-        .Host(new HostSystem { Home = tree.Path("home"), DataDirectory = tree.Path("data"), IsGameRunning = running ?? (() => false), IsWineRunningIn = wine ?? (_ => false) }).Build();
+    private Buddy Buddy(Func<bool>? running = null, Func<string, bool>? wine = null, Func<bool>? steam = null) => new BuddyBuilder().Http(new HttpClient(server)).AsiLoader(Pin())
+        .Host(new HostSystem
+        {
+            Home = tree.Path("home"), DataDirectory = tree.Path("data"), IsGameRunning = running ?? (() => false), IsWineRunningIn = wine ?? (_ => false), IsSteamRunning = steam ?? (() => false),
+        }).Build();
 
     private string Root => tree.Path("steamapps", "common", "MultiVersus");
 
@@ -951,6 +954,100 @@ public sealed class GameStatesTests : IDisposable
 
         Assert.Empty(buddy.Installs.Read(Game()).WineOverridesMissing);
         Assert.NotNull(buddy.States.PrepareWineSetting(buddy.Installs.Read(Game())).Refused);
+    }
+
+    // Steam's launch options file for one account, with the game's block holding a wrapper and an argument.
+    private const string LocalConfig = "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n"
+        + "\t\t\t\t\t\"1818750\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LastPlayed\"\t\t\"1792037227\"\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"gamemoderun %command% -d3d12\"\n\t\t\t\t\t}\n"
+        + "\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n";
+
+    private string LocalConfigFile => tree.Path("home", ".local", "share", "Steam", "userdata", "55555", "config", "localconfig.vdf");
+
+    [Fact]
+    public void The_steam_launch_options_setting_goes_in_and_comes_out_with_the_rest_of_the_line_kept_and_not_while_steam_runs()
+    {
+        Season1Installed();
+        tree.File(LocalConfig, Rel(LocalConfigFile));
+        tree.File("\"users\"\n{\n\t\"76561197960321283\"\n\t{\n\t\t\"PersonaName\"\t\t\"Someone\"\n\t}\n}\n", "home", ".local", "share", "Steam", "config", "loginusers.vdf");
+        bool steamRuns = false;
+        var buddy = Buddy(steam: () => steamRuns);
+        var state = buddy.Installs.Read(Game());
+
+        var account = Assert.Single(buddy.States.LaunchOptionsAccounts(state));
+        Assert.Equal(new LaunchOptionsAccount("55555", "Someone", "gamemoderun %command% -d3d12", false) { File = LocalConfigFile }, account);
+        Assert.Equal(["version"], GameStates.LaunchOptionsDlls(state));
+
+        // Steam running: refused before, and again at the moment of the change.
+        steamRuns = true;
+        var refused = buddy.States.PrepareLaunchOptions(state, account, on: true);
+        Assert.StartsWith("Steam is running", refused.Refused);
+        Assert.Equal(LocalConfig, Read(LocalConfigFile));
+        steamRuns = false;
+        var on = buddy.States.PrepareLaunchOptions(state, account, on: true);
+        Assert.Null(on.Refused);
+        Assert.Equal(["Now: gamemoderun %command% -d3d12", "After: WINEDLLOVERRIDES=\"version=n,b\" gamemoderun %command% -d3d12"], on.Summary.Skip(1));
+        steamRuns = true;
+        Assert.Throws<ChangeException>(() => on.Apply());
+        Assert.Equal(LocalConfig, Read(LocalConfigFile));
+
+        steamRuns = false;
+        on.Apply();
+
+        Assert.Equal(LocalConfig.Replace("\"gamemoderun %command% -d3d12\"", "\"WINEDLLOVERRIDES=\\\"version=n,b\\\" gamemoderun %command% -d3d12\""), Read(LocalConfigFile));
+        account = Assert.Single(buddy.States.LaunchOptionsAccounts(state));
+        Assert.True(account.LoadsLoader);
+        Assert.NotNull(buddy.States.PrepareLaunchOptions(state, account, on: true).Refused);
+
+        buddy.States.PrepareLaunchOptions(state, account, on: false).Apply();
+
+        Assert.Equal(LocalConfig, Read(LocalConfigFile));
+        Assert.False(Assert.Single(buddy.States.LaunchOptionsAccounts(state)).LoadsLoader);
+        Assert.False(File.Exists(LocalConfigFile + ".mvs-buddy"));
+    }
+
+    // The file is read and written as bytes: text in another key (a name with accents, a mark at the start) comes back as
+    // it was, and a byte that is not UTF-8 anywhere in it means the file is left alone rather than rewritten.
+    [Fact]
+    public void Every_other_byte_of_the_file_survives_and_a_file_that_is_not_utf8_is_left_alone()
+    {
+        Season1Installed();
+        string text = LocalConfig.Replace("\"LastPlayed\"\t\t\"1792037227\"", "\"PersonaName\"\t\t\"Zoë Ångström 🎮\"");
+        byte[] original = [0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes(text)];
+        Directory.CreateDirectory(Path.GetDirectoryName(LocalConfigFile)!);
+        File.WriteAllBytes(LocalConfigFile, original);
+        var buddy = Buddy();
+        var state = buddy.Installs.Read(Game());
+        var account = Assert.Single(buddy.States.LaunchOptionsAccounts(state));
+
+        buddy.States.PrepareLaunchOptions(state, account, on: true).Apply();
+
+        byte[] expected = [0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes(text.Replace("\"gamemoderun %command% -d3d12\"", "\"WINEDLLOVERRIDES=\\\"version=n,b\\\" gamemoderun %command% -d3d12\""))];
+        Assert.Equal(expected, File.ReadAllBytes(LocalConfigFile));
+        buddy.States.PrepareLaunchOptions(state, Assert.Single(buddy.States.LaunchOptionsAccounts(state)), on: false).Apply();
+        Assert.Equal(original, File.ReadAllBytes(LocalConfigFile));
+
+        byte[] broken = [.. original.Take(10), 0xFF, .. original.Skip(10)];
+        File.WriteAllBytes(LocalConfigFile, broken);
+        Assert.Empty(buddy.States.LaunchOptionsAccounts(state));
+        var e = Assert.Throws<ChangeException>(() => buddy.States.PrepareLaunchOptions(state, account, on: true).Apply());
+        Assert.Contains("not UTF-8", e.Message);
+        Assert.Equal(broken, File.ReadAllBytes(LocalConfigFile));
+    }
+
+    [Fact]
+    public void Accounts_the_game_never_ran_under_are_not_offered_unless_there_is_only_one()
+    {
+        Season1Installed();
+        string noGame = LocalConfig.Replace("\t\t\t\t\t\"1818750\"", "\t\t\t\t\t\"440\"");
+        tree.File(noGame, "home", ".local", "share", "Steam", "userdata", "12345", "config", "localconfig.vdf");
+        var buddy = Buddy();
+        var state = buddy.Installs.Read(Game());
+
+        Assert.Equal(["12345"], buddy.States.LaunchOptionsAccounts(state).Select(a => a.Id));
+
+        tree.File(LocalConfig, Rel(LocalConfigFile));
+        Assert.Equal(["55555"], buddy.States.LaunchOptionsAccounts(state).Select(a => a.Id));
+        Assert.Empty(buddy.States.LaunchOptionsAccounts(buddy.Installs.Read(Game() with { Store = GameStore.Unknown })));
     }
 
     // Whether the release cache still has a file of these contents (git's name for it: the SHA-1 of "blob <size>\0" and the bytes).

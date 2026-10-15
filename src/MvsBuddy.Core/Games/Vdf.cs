@@ -32,7 +32,7 @@ internal sealed class Vdf
         var node = new Vdf();
         while (true)
         {
-            string? key = Token(text, ref at);
+            string? key = Token(text, ref at, out _);
             if (key == null)
             {
                 return nested ? throw new FormatException("A '{' is never closed.") : node;
@@ -41,18 +41,23 @@ internal sealed class Vdf
             {
                 return nested ? node : throw new FormatException("A '}' closes nothing.");
             }
-            string? value = Token(text, ref at) ?? throw new FormatException($"The key \"{key}\" has no value.");
+            string? value = Token(text, ref at, out _) ?? throw new FormatException($"The key \"{key}\" has no value.");
             node.entries.Add(new KeyValuePair<string, object>(key, value == "{" ? ParseEntries(text, ref at, nested: true) : value));
         }
     }
 
-    // The next token: a quoted string (with \\ \" \n \t escapes), an unquoted word, "{" or "}"; null at the end.
-    private static string? Token(string text, ref int at)
+    /// <summary>
+    /// The next token from <paramref name="at"/>: a quoted string (with <c>\\</c> <c>\"</c> <c>\n</c> <c>\t</c> escapes),
+    /// an unquoted word, <c>{</c> or <c>}</c>; null at the end. <paramref name="start"/> is where it begins in the text,
+    /// and <paramref name="at"/> is left just after it.
+    /// </summary>
+    internal static string? Token(string text, ref int at, out int start)
     {
         while (at < text.Length)
         {
             char c = text[at];
-            if (char.IsWhiteSpace(c))
+            // A byte-order mark at the start of a file is not whitespace to .NET, and is nothing to KeyValues.
+            if (char.IsWhiteSpace(c) || c == '\uFEFF')
             {
                 at++;
             }
@@ -68,6 +73,7 @@ internal sealed class Vdf
                 break;
             }
         }
+        start = at;
         if (at >= text.Length)
         {
             return null;

@@ -33,6 +33,7 @@ internal sealed class MainScreen
     private bool onGame;
     private string? cleanStartUnavailable;
     private IReadOnlyList<SetAside> kept = [];
+    private IReadOnlyList<LaunchOptionsAccount> launchOptions = [];
     private bool canUndo;
     private DateTimeOffset? firstLook;
     private bool picking;
@@ -295,10 +296,11 @@ internal sealed class MainScreen
         ui.Run(() =>
         {
             var read = buddy.Installs.Read(copy);
-            return Task.FromResult((read, buddy.Stock.Unavailable(read), buddy.States.SetAsideOf(read), buddy.States.CanUndo(copy), buddy.States.FirstLookOf(copy)));
+            return Task.FromResult((read, buddy.Stock.Unavailable(read), buddy.States.SetAsideOf(read), buddy.States.CanUndo(copy), buddy.States.FirstLookOf(copy),
+                buddy.States.LaunchOptionsAccounts(read)));
         }, read =>
         {
-            (state, cleanStartUnavailable, kept, canUndo, firstLook) = read;
+            (state, cleanStartUnavailable, kept, canUndo, firstLook, launchOptions) = read;
             ShowGame();
         }, Failed);
     }
@@ -341,8 +343,8 @@ internal sealed class MainScreen
         }
         if (s.WineOverridesMissing.Count > 0)
         {
-            rml.Append(Button("Set Wine to load the loader", () => Prepare("Set Wine to load the loader?", _ => buddy.States.PrepareWineSetting(s),
-                "Wine loads the loader from the game's folder now."), "primary"));
+            rml.Append(Button("Enable WINEDLLOVERRIDES for loader", () => Prepare("Enable a Wine/Proton registry DLL override for the OpenVersus mod loader?", _ => buddy.States.PrepareWineSetting(s),
+                "Wine DLL override (registry) for the mod loader is now enabled."), "primary"));
         }
         if (canUndo)
         {
@@ -368,6 +370,7 @@ internal sealed class MainScreen
         rml.Append(InstallSection(s));
         rml.Append(CleanStartSection());
         rml.Append(KeptSection(s));
+        rml.Append(LaunchOptionsSection(s));
 
         if (s.Notes.Count > 0)
         {
@@ -380,6 +383,33 @@ internal sealed class MainScreen
         }
         Show(rml.ToString());
         onGame = true;
+    }
+
+    // Under Proton, Steam's launch options can carry the Wine setting too (the registry cannot see them). Off by default;
+    // what the buttons show is read from Steam's file, so a refused change leaves them as they were.
+    private string LaunchOptionsSection(InstallState s)
+    {
+        if (launchOptions.Count == 0)
+        {
+            return "";
+        }
+        string dlls = string.Join(", ", GameStates.LaunchOptionsDlls(s).Select(d => d + ".dll"));
+        var rml = new StringBuilder("<h3>Steam launch options</h3>");
+        rml.Append($"<p class=\"muted\">Steam's launch options for the game can tell Wine to load {Html.Text(dlls)} from the game's folder as well (WINEDLLOVERRIDES). "
+            + "On adds that to your launch options and off takes it out; the rest of them stay as they are. Steam has to be closed while it is changed.</p>");
+        foreach (var account in launchOptions)
+        {
+            rml.Append($"<div class=\"card\"><p class=\"strong\">{Html.Text(account.Name)}</p><p class=\"muted\">{Html.Text(account.Options.Length == 0 ? "No launch options." : account.Options)}</p><div class=\"row\">");
+            foreach (var (on, word) in new[] { (false, "Off"), (true, "On") })
+            {
+                rml.Append(on == account.LoadsLoader
+                    ? Button(word, ShowGame, "tab on")
+                    : Button(word, () => Prepare($"Turn the Steam launch options setting {word.ToLowerInvariant()}?",
+                        _ => buddy.States.PrepareLaunchOptions(s, account, on), $"Steam's launch options for {account.Name} are changed."), "tab"));
+            }
+            rml.Append("</div></div>");
+        }
+        return rml.ToString();
     }
 
     // Installing -------------------------------------------------------------------------------------------------------

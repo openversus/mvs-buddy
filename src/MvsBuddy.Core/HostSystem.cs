@@ -30,6 +30,9 @@ internal sealed class HostSystem
     /// <summary>Whether Wine runs in this prefix (its wineserver), which may write the prefix's registry files over when it ends.</summary>
     internal Func<string, bool> IsWineRunningIn { get; init; } = _ => false;
 
+    /// <summary>Whether Steam is running, which writes its launch options file over when it exits.</summary>
+    internal Func<bool> IsSteamRunning { get; init; } = () => false;
+
     /// <summary>
     /// Whether this account is refused changes in an existing folder: adding files and folders to it and taking them out.
     /// True only when the system answers "access denied"; any other answer (the folder busy, gone, on an odd file system)
@@ -67,6 +70,7 @@ internal sealed class HostSystem
             SearchRoots = windows ? FixedDrives : LinuxSearchRoots,
             IsGameRunning = windows ? GameRunningOnWindows : GameRunningUnderWine,
             IsWineRunningIn = windows ? _ => false : WineRunningIn,
+            IsSteamRunning = windows ? SteamRunningOnWindows : SteamRunning,
             IsChangeDenied = windows ? ChangeDeniedOnWindows : ChangeDeniedOnUnix,
             UserSid = windows ? WindowsUserSid : () => null,
             RunElevated = windows ? RunElevatedOnWindows : (_, _, _) => Task.FromResult<int?>(null),
@@ -184,6 +188,50 @@ internal sealed class HostSystem
                     if (File.ReadAllText(Path.Combine(process, "comm")).Trim() == "wineserver"
                         && Directory.EnumerateFileSystemEntries(Path.Combine(process, "fd")).Select(resolve.RealPath)
                             .Any(open => open == wanted || open.StartsWith(wanted + "/", StringComparison.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    // A process that ended, or one that is not ours to read.
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            return false;
+        }
+        return false;
+    }
+
+    private static bool SteamRunningOnWindows()
+    {
+        var processes = System.Diagnostics.Process.GetProcessesByName("steam");
+        foreach (var process in processes)
+        {
+            process.Dispose();
+        }
+        return processes.Length > 0;
+    }
+
+    /// <summary>
+    /// Whether Steam's own process runs: one whose program name (<c>/proc/&lt;pid&gt;/comm</c>) is <c>steam</c>, the
+    /// client binary. Its helpers (<c>steamwebhelper</c>, <c>steam.sh</c>) and a shell that only names Steam do not count.
+    /// </summary>
+    internal static bool SteamRunning()
+    {
+        try
+        {
+            foreach (string process in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(process), out _))
+                {
+                    continue;
+                }
+                try
+                {
+                    if (File.ReadAllText(Path.Combine(process, "comm")).Trim() == "steam")
                     {
                         return true;
                     }
