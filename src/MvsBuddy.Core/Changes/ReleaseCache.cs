@@ -137,9 +137,9 @@ internal sealed class ReleaseCache
         try
         {
             progress?.Report($"Unpacking {zipAsset.Name}...");
-            Installer.ExtractPluginFolder(zip, stage);
+            Installer.ExtractPluginFolder(zip, progress, stage);
             string loaderFolder = Path.Combine(stage, LoaderFolder);
-            Installer.ExtractLoader(loaderZip, pin, loaderFolder);
+            Installer.ExtractLoader(loaderZip, pin, loaderFolder, progress);
             File.Copy(license, Path.Combine(loaderFolder, Installer.LicenseName));
             var info = new CachedReleaseInfo
             {
@@ -195,7 +195,7 @@ internal sealed class ReleaseCache
         string stage = Path.Combine(DataDirectory(), "stage", Guid.NewGuid().ToString("N"));
         try
         {
-            return (File.ReadAllBytes(Installer.ExtractLoader(zip, pin, stage)), File.ReadAllBytes(licensePath));
+            return (File.ReadAllBytes(Installer.ExtractLoader(zip, pin, stage, progress)), File.ReadAllBytes(licensePath));
         }
         finally
         {

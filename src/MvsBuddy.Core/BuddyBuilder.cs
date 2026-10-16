@@ -93,8 +93,37 @@ public sealed class BuddyBuilder
         var cache = new ReleaseCache(system, downloads, loaderPin, loggerFactory.CreateLogger<ReleaseCache>());
         var pakStore = new PakStore(system, downloads, loggerFactory.CreateLogger<PakStore>());
         var states = new GameStates(system, releases, cache, pakStore, installs, stock, loaderPin, loggerFactory.CreateLogger<GameStates>());
-        WipeOldHeld(system, loggerFactory.CreateLogger<BuddyBuilder>());
-        return new Buddy(releases, games, installs, downloads, stock, permissions, cache, pakStore, states, new Preferences(system), ownsHttp ? client : null);
+        var log = loggerFactory.CreateLogger<BuddyBuilder>();
+        WipeOldHeld(system, log);
+        CleanPakSets(system, log);
+        return new Buddy(system, releases, games, installs, downloads, stock, permissions, cache, pakStore, states, new Preferences(system), ownsHttp ? client : null);
+    }
+
+    // The pak sets, seen clean at every startup: the mark of the web comes off any pak kept here (Windows), whichever way it
+    // got one, so a set put in place is never a set that will not load.
+    private static void CleanPakSets(HostSystem system, ILogger log)
+    {
+        if (string.IsNullOrEmpty(system.DataDirectory))
+        {
+            return;
+        }
+        string paks = Path.Combine(system.DataDirectory, "paks");
+        if (!Directory.Exists(paks))
+        {
+            return;
+        }
+        try
+        {
+            int cleaned = Installer.RemoveMarksOf(Directory.EnumerateFiles(paks, "*", SearchOption.AllDirectories));
+            if (cleaned > 0)
+            {
+                log.LogInformation("Took the mark of the web off {Count} kept paks", cleaned);
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            log.LogWarning(e, "Could not look over the kept paks for the mark of the web");
+        }
     }
 
     // What the engine before the states repositories kept (held/ sets, until 2026-10-14) goes at startup, silently: nothing

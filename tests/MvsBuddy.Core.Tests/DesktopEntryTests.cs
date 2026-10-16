@@ -32,6 +32,23 @@ public sealed class DesktopEntryTests : IDisposable
     private static readonly Dictionary<int, byte[]> Icons = new() { [256] = [1, 2, 3], [512] = [4, 5, 6, 7] };
 
     [Fact]
+    public void Removing_takes_the_entry_and_every_icon_and_leaves_the_folders()
+    {
+        Assert.Empty(DesktopEntry.Remove(Host()));
+        DesktopEntry.Install(Host(), "/opt/mvs/MvsBuddy", Icons);
+        tree.File("someone else's", "home", ".local", "share", "applications", "other.desktop");
+
+        var removed = DesktopEntry.Remove(Host());
+
+        Assert.Equal(3, removed.Count);
+        Assert.False(File.Exists(tree.Path("home", ".local", "share", "applications", "mvs-buddy.desktop")));
+        Assert.False(File.Exists(tree.Path("home", ".local", "share", "icons", "hicolor", "256x256", "apps", "mvs-buddy.png")));
+        Assert.False(File.Exists(tree.Path("home", ".local", "share", "icons", "hicolor", "512x512", "apps", "mvs-buddy.png")));
+        Assert.True(File.Exists(tree.Path("home", ".local", "share", "applications", "other.desktop")));
+        Assert.Empty(DesktopEntry.Remove(Host(windows: true)));
+    }
+
+    [Fact]
     public void It_is_written_once_with_its_icons_rewritten_when_the_executable_moves_and_left_alone_otherwise()
     {
         string expected = tree.Path("home", ".local", "share", "applications", "mvs-buddy.desktop");

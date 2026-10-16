@@ -444,6 +444,33 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task After_an_uninstall_what_was_set_aside_still_comes_back()
+    {
+        var extras = ModdedEverywhere();
+        var buddy = Buddy();
+        string mvsiPlugin = Path.Combine(Win64, "plugins", "MVSIASI.asi");
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" }))).Apply();
+        Assert.False(File.Exists(mvsiPlugin));
+        var others = extras.Where(e => e.Kind == ExtraKind.Other).ToList();
+        Assert.NotEmpty(others);
+        buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), others).Apply();
+        Assert.All(others, o => Assert.False(File.Exists(o.Path)));
+
+        buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(ModLayout.None, buddy.Installs.Read(Game()).Mod.Layout);
+        Assert.False(buddy.States.CanUndo(Game()));
+
+        var mvsi = buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.MvsInfinite);
+        Assert.Null(mvsi.Refused);
+        mvsi.Apply();
+        Assert.Equal("mvsi asi", Read(mvsiPlugin));
+        var rest = buddy.States.PreparePutBack(buddy.Installs.Read(Game()), SetAsideKind.Rest);
+        Assert.Null(rest.Refused);
+        rest.Apply();
+        Assert.All(others, o => Assert.True(File.Exists(o.Path)));
+    }
+
+    [Fact]
     public async Task Without_github_a_testing_state_goes_live_with_the_paks_it_had_and_says_so()
     {
         Game();
@@ -844,9 +871,13 @@ public sealed class GameStatesTests : IDisposable
         Assert.Null(buddy.States.FirstLookOf(Game()));
         Assert.NotNull(buddy.States.PrepareRollBack(buddy.Installs.Read(Game())).Refused);
 
-        // An uninstall deletes the paks for good, and the hand install's has no address to come back from: the roll back
-        // goes ahead without it, told and with the risk said, never refused.
+        // An uninstall keeps the pak sets, so the roll back after it has the hand install's pak; with the set gone too
+        // (the person deleted it), the roll back goes ahead without it, told and with the risk said, never refused.
         buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Apply();
+        var whole = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
+        Assert.Null(whole.Refused);
+        Assert.Null(whole.Risk);
+        Directory.Delete(tree.Path("data", "paks", "testing"), recursive: true);
         var roll = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
         Assert.Null(roll.Refused);
         Assert.Contains("OVS_P.pak is not put back: it is nowhere MVS Buddy keeps paks, and there is no address to download it from again.", roll.Summary);
@@ -1573,8 +1604,8 @@ public sealed class GameStatesTests : IDisposable
         Assert.Null(uninstall.Refused);
         Assert.Equal([
             "Deletes OpenVersus 2026.10.14.01 (Prod) from the game's folder.",
-            "Deletes its pak.",
-            "Deletes OpenVersus Testing, kept for this copy, with its saved state and its paks.",
+            "Its pak leaves the game, kept in MVS Buddy's folder until MVS Buddy's files are deleted.",
+            "Deletes OpenVersus Testing, kept for this copy, with its saved state; its paks stay in MVS Buddy's folder.",
             "Deletes Ultimate ASI Loader too: MVS Buddy put it there, and no plugin is left to load through it.",
             "There is no undo for this: to have OpenVersus again, install it.",
         ], uninstall.Summary);
@@ -1584,7 +1615,9 @@ public sealed class GameStatesTests : IDisposable
         Assert.False(Directory.Exists(Home));
         Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
         Assert.False(buddy.States.CanUndo(Game()));
-        Assert.All(new[] { "prod", "testing", "other" }, set => Assert.False(Directory.Exists(tree.Path("data", "paks", set))));
+        // The pak sets stay for a roll back and for installing again; only deleting MVS Buddy's files takes them.
+        Assert.Equal("prod pak", Read(tree.Path("data", "paks", "prod", "OVS_P.pak")));
+        Assert.True(Directory.Exists(tree.Path("data", "paks", "testing")));
     }
 
     [Fact]
@@ -1604,7 +1637,7 @@ public sealed class GameStatesTests : IDisposable
         Assert.Equal(InstallStatus.LoaderOnly, buddy.Installs.Read(Game()).Status);
         Assert.False(buddy.States.CanUndo(Game()));
         Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
-        Assert.False(Directory.Exists(tree.Path("data", "paks", "testing")));
+        Assert.True(Directory.Exists(tree.Path("data", "paks", "testing")));
     }
 
     [Fact]
@@ -1638,7 +1671,7 @@ public sealed class GameStatesTests : IDisposable
 
         var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
         Assert.Equal([
-            "Deletes OpenVersus Testing, kept for this copy, with its saved state and its paks.",
+            "Deletes OpenVersus Testing, kept for this copy, with its saved state; its paks stay in MVS Buddy's folder.",
             "Ultimate ASI Loader stays: MVSIASI.asi still loads through it.",
             "There is no undo for this: to have OpenVersus again, install it.",
         ], uninstall.Summary);
@@ -1647,7 +1680,7 @@ public sealed class GameStatesTests : IDisposable
         Assert.Equal(off, Everything());
         Assert.Empty(buddy.States.SetAsideOf(buddy.Installs.Read(Game())));
         Assert.False(buddy.States.CanUndo(Game()));
-        Assert.False(Directory.Exists(tree.Path("data", "paks", "testing")));
+        Assert.True(Directory.Exists(tree.Path("data", "paks", "testing")));
         Assert.NotNull(buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Refused);
     }
 }

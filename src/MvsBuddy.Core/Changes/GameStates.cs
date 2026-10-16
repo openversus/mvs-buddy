@@ -597,10 +597,12 @@ public sealed class GameStates
         SetAside(state ?? throw new ArgumentNullException(nameof(state)), openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true);
 
     /// <summary>
-    /// Gets uninstalling OpenVersus ready: its files and its paks are deleted, and Ultimate ASI Loader with them when the
-    /// buddy put it there (its install record names it) and no other plugin is left to load through it; a loader put there
-    /// some other way stays, and so do the mod's logs. Nothing of OpenVersus is kept for this copy afterwards: the saved
-    /// state and paks of every channel kept for it go too. There is no undo; to have OpenVersus again, it is installed again.
+    /// Gets uninstalling OpenVersus ready: its files go, its paks leave the game for its channel's set, and Ultimate ASI
+    /// Loader goes with them when MVS Buddy put it there (its install record names it) and no other plugin is left to load
+    /// through it; a loader put there some other way stays, and so do the mod's logs. No state of OpenVersus is kept for
+    /// this copy afterwards: every channel kept for it goes, with its saved state. The pak sets stay in MVS Buddy's folder,
+    /// as every set does until MVS Buddy's own files are deleted (<see cref="Buddy.RemoveData"/>), so a roll back to the
+    /// first look still has its paks. There is no undo; to have OpenVersus again, it is installed again.
     /// </summary>
     public PreparedChange PrepareUninstall(InstallState state)
     {
@@ -624,7 +626,8 @@ public sealed class GameStates
         }
         if (goingPaks.Count > 0)
         {
-            summary.Add(goingPaks.Count == 1 ? "Deletes its pak." : $"Deletes its {goingPaks.Count} paks.");
+            summary.Add(goingPaks.Count == 1 ? "Its pak leaves the game, kept in MVS Buddy's folder until MVS Buddy's files are deleted."
+                : $"Its {goingPaks.Count} paks leave the game, kept in MVS Buddy's folder until MVS Buddy's files are deleted.");
         }
         else if (live.Count > 0)
         {
@@ -633,7 +636,7 @@ public sealed class GameStates
         }
         foreach (var channel in kept)
         {
-            summary.Add($"Deletes OpenVersus {channel}, kept for this copy, with its saved state and its paks.");
+            summary.Add($"Deletes OpenVersus {channel}, kept for this copy, with its saved state; its paks stay in MVS Buddy's folder.");
         }
         bool loader = state.Loaders.Any(l => l.IsUltimateAsiLoader);
         if (loaderPaths.Count > 0)
@@ -670,7 +673,7 @@ public sealed class GameStates
             if (inGame)
             {
                 Change(report, state.Game, "before OpenVersus was uninstalled", "OpenVersus, uninstalled", refused,
-                    // The mod's paks leave as its channel's set, which Forget deletes; MVS Infinite's stay where they are.
+                    // The mod's paks leave as its channel's set, which stays; MVS Infinite's stay where they are.
                     (_, live) => live.Where(p => p.Home != null).Select(p => p.InPlace).ToList(),
                     (store, _, before) => store.Edit(before, removed.Select(p => (TreeEdit)new Removal(p))),
                     (store, _) => Forget(store));
@@ -688,7 +691,8 @@ public sealed class GameStates
         });
     }
 
-    // The end of an uninstall: no channel's state or paks are kept for this copy, and there is nothing to undo.
+    // The end of an uninstall: no channel's state is kept for this copy, and there is nothing to undo. The pak sets stay:
+    // only deleting MVS Buddy's files takes them, and the first look's roll back may still need them.
     private void Forget(GitStore store)
     {
         foreach (var channel in new[] { Channel.Prod, Channel.Testing })
@@ -699,13 +703,6 @@ public sealed class GameStates
         foreach (string set in SetBranches)
         {
             store.DeleteBranch(PreviousOf + set);
-        }
-        foreach (string set in new[] { ReleaseCache.BranchOf(Channel.Prod), ReleaseCache.BranchOf(Channel.Testing), OtherPaks })
-        {
-            if (Directory.Exists(paks.Folder(set)))
-            {
-                Directory.Delete(paks.Folder(set), recursive: true);
-            }
         }
     }
 

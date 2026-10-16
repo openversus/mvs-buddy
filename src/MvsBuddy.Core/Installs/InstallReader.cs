@@ -75,6 +75,14 @@ public sealed class InstallReader
             : [];
         // Whose each is: MVS Infinite's by its name, or as the person said for this copy.
         var answers = string.IsNullOrEmpty(host.DataDirectory) ? new Dictionary<string, bool>() : PakAnswers(Changes.GameStates.PakAnswersFile(host, win64));
+        // Seen clean: the mark of the web comes off the mod's files, its paks and every Ultimate ASI Loader here, whoever put
+        // them there (Windows), so the first look and every state hold files that load, and a roll back brings back the same.
+        int cleaned = Changes.Installer.RemoveMarksOf(mod.Files.Concat(mod.OldLayoutFiles).Concat(loaders.Where(l => l.IsUltimateAsiLoader).Select(l => l.Path))
+            .Concat(paks.Select(p => p.Path)).Concat(paksInGame.Select(p => p.Path)));
+        if (cleaned > 0)
+        {
+            log.LogInformation("Took the mark of the web off {Count} of the mod's files in {Folder}", cleaned, win64);
+        }
         var otherPaks = game.Verified
             ? PakFiles(Path.Combine(game_, "Content", "Paks"), deep: true).Where(p => !IsOurs(p) && !GameOwnPak.IsMatch(p.Name))
                 .Select(p => answers.TryGetValue(PakKey(p.Name), out bool theirs)

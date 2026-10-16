@@ -10,9 +10,11 @@ namespace MvsBuddy;
 public sealed class Buddy : IDisposable
 {
     private readonly HttpClient? ownedHttp;
+    private readonly HostSystem host;
 
-    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, Preferences preferences, HttpClient? ownedHttp)
+    internal Buddy(HostSystem host, ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, Preferences preferences, HttpClient? ownedHttp)
     {
+        this.host = host;
         Preferences = preferences;
         States = states;
         Cache = cache;
@@ -56,6 +58,88 @@ public sealed class Buddy : IDisposable
     /// <summary>The channel paks, kept outside git, a set per channel.</summary>
     internal PakStore Paks { get; }
 
+    /// <summary>Where MVS Buddy keeps everything of its own; empty when it has nowhere.</summary>
+    public string DataDirectory => host.DataDirectory;
+
+    /// <summary>
+    /// Deletes everything MVS Buddy keeps, for every copy of the game: the states, what clean starts set aside, the pak
+    /// sets, the release cache, downloads and logs, and the menu entry (Linux); the preferences too unless
+    /// <paramref name="keepPreferences"/>. The end of an uninstall, at the person's say-so. The states go before the
+    /// cache they borrow from, and nothing after a failure, so what is left is still readable. What could not be deleted
+    /// (the log MVS Buddy is writing, on Windows) is returned as <see cref="DataRemoval.Left"/>.
+    /// </summary>
+    public DataRemoval RemoveData(bool keepPreferences)
+    {
+        var deleted = new List<string>();
+        var left = new List<string>();
+        try
+        {
+            foreach (string entry in DesktopEntry.Remove(host))
+            {
+                deleted.Add(entry);
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            left.Add($"the menu entry ({e.Message})");
+        }
+        if (string.IsNullOrEmpty(host.DataDirectory) || !Directory.Exists(host.DataDirectory))
+        {
+            return new DataRemoval(deleted, left);
+        }
+        // The states first, then the cache they borrow objects from; logs last, since the one being written may not go.
+        var entries = Directory.EnumerateFileSystemEntries(host.DataDirectory)
+            .OrderBy(p => Path.GetFileName(p) switch { "states" => 0, "cache.git" => 1, "logs" => 3, _ => 2 }).ToList();
+        bool everything = !keepPreferences;
+        foreach (string entry in entries)
+        {
+            string name = Path.GetFileName(entry);
+            if (keepPreferences && name == Preferences.FileName)
+            {
+                continue;
+            }
+            try
+            {
+                if (Directory.Exists(entry))
+                {
+                    Directory.Delete(entry, recursive: true);
+                }
+                else
+                {
+                    File.Delete(entry);
+                }
+                deleted.Add(entry);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                left.Add($"{entry} ({e.Message})");
+                everything = false;
+                if (name == "states")
+                {
+                    // The cache stays readable for the states that are still here.
+                    left.Add(Path.Combine(host.DataDirectory, "cache.git") + " (kept: the states still here read from it)");
+                    entries.Remove(Path.Combine(host.DataDirectory, "cache.git"));
+                }
+            }
+        }
+        if (everything && !Directory.EnumerateFileSystemEntries(host.DataDirectory).Any())
+        {
+            try
+            {
+                Directory.Delete(host.DataDirectory);
+                deleted.Add(host.DataDirectory);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                left.Add($"{host.DataDirectory} ({e.Message})");
+            }
+        }
+        return new DataRemoval(deleted, left);
+    }
+
     /// <summary>Disposes the HTTP client if MVS Buddy made it.</summary>
     public void Dispose() => ownedHttp?.Dispose();
 }
+
+/// <summary>What <see cref="Buddy.RemoveData"/> did: what went, and what could not go (with why).</summary>
+public sealed record DataRemoval(IReadOnlyList<string> Deleted, IReadOnlyList<string> Left);

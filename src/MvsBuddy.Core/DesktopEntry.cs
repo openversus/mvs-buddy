@@ -54,6 +54,29 @@ public static class DesktopEntry
         return path;
     }
 
+    /// <summary>Removes the menu entry and its icons; the paths removed (empty on Windows, or when there were none).</summary>
+    /// <exception cref="IOException">One could not be deleted.</exception>
+    /// <exception cref="UnauthorizedAccessException">One could not be deleted.</exception>
+    public static IReadOnlyList<string> Remove() => Remove(HostSystem.Current());
+
+    internal static IReadOnlyList<string> Remove(HostSystem host)
+    {
+        if (host.IsWindows)
+        {
+            return [];
+        }
+        string data = DataHome(host);
+        var removed = new List<string>();
+        string icons = Path.Combine(data, "icons", "hicolor");
+        var files = Directory.Exists(icons) ? Directory.EnumerateDirectories(icons).Select(size => Path.Combine(size, "apps", IconName + ".png")) : [];
+        foreach (string file in files.Append(Path.Combine(data, "applications", FileName)).Where(File.Exists))
+        {
+            File.Delete(file);
+            removed.Add(file);
+        }
+        return removed;
+    }
+
     /// <summary>The desktop entry for <paramref name="executable"/>, in the freedesktop.org format.</summary>
     internal static string Text(string executable) =>
         "[Desktop Entry]\n"

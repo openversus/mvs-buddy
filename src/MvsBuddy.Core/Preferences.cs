@@ -12,7 +12,8 @@ namespace MvsBuddy;
 /// </summary>
 public sealed class Preferences
 {
-    internal const string FileName = "preferences.toml";
+    /// <summary>The preferences file's name, in MVS Buddy's folder.</summary>
+    public const string FileName = "preferences.toml";
 
     /// <summary>The file as MVS Buddy writes it the first time, every key with its default and a comment.</summary>
     internal const string Template = """

@@ -169,6 +169,11 @@ public sealed class Downloads
                 File.Delete(path);
             }
             File.Move(part, path);
+            // The one place every file from the internet lands: whatever Windows marks it with on the way, it is clean here.
+            if (Changes.Installer.RemoveMarkOfTheWeb(path, null))
+            {
+                log.LogInformation("Took the mark of the web off {Path}", path);
+            }
             return path;
         }
         catch (HttpRequestException e)

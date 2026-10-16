@@ -356,7 +356,10 @@ internal sealed class MainScreen
         Reload();
     }
 
-    private void Reload()
+    private void Reload() => Refresh(ShowGame);
+
+    // Reads the copy again (what is installed, kept, undoable), then goes on: to its screen, or to the next step of a flow.
+    private void Refresh(Action next)
     {
         var copy = game!;
         Show(Working("Reading what is installed..."));
@@ -369,7 +372,7 @@ internal sealed class MainScreen
         }, read =>
         {
             (state, cleanStartUnavailable, kept, canUndo, firstLook, launchOptions) = read;
-            ShowGame();
+            next();
         }, Failed);
     }
 
@@ -651,30 +654,111 @@ internal sealed class MainScreen
         }
     }
 
-    // Uninstalling OpenVersus, or, when MVS Buddy kept a first look at this copy, rolling the copy back to it instead.
+    // Uninstalling, as a flow of choices, nothing assumed: OpenVersus goes with every channel kept for this copy, the copy
+    // is left as the person picks (the first look, MVS Infinite, what a clean start set aside, stock, or as it is now), and
+    // then MVS Buddy's own files go or stay at their say-so, the preferences asked about on their own.
     private void ChooseUninstall(InstallState s, bool openVersusHere)
     {
-        void Uninstall() => Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(s), "OpenVersus was uninstalled.");
-        if (firstLook is not { } at)
-        {
-            Uninstall();
-            return;
-        }
         actions.Clear();
-        var rml = new StringBuilder(openVersusHere ? "<h2>Uninstall</h2>" : "<h2>Roll back</h2>");
-        if (openVersusHere)
+        bool uninstall = openVersusHere || kept.Any(k => k.Kind == SetAsideKind.OpenVersus);
+        var rml = new StringBuilder(openVersusHere ? "<h2>Uninstall OpenVersus</h2>" : "<h2>Roll back</h2>");
+        rml.Append(uninstall
+            ? "<p>OpenVersus is deleted from this copy, with every channel kept for it; there is no undo for that. Then this copy is left as you pick here, and then you say what happens to MVS Buddy's own files.</p>"
+            : "<p>Pick what this copy is left as. Then you say what happens to MVS Buddy's own files.</p>");
+
+        // One step after another, each with its own look and go-ahead, the copy read again between them.
+        void Run(Action<Action> endState, bool cleanStart = false)
         {
-            rml.Append("<div class=\"card\"><p class=\"strong\">Uninstall OpenVersus</p><p class=\"muted\">Its files and paks are deleted, with every "
-                + "channel kept for this copy. There is no undo.</p>")
-                .Append(Button("Uninstall OpenVersus", Uninstall, "primary")).Append("</div>");
+            void AfterUninstall() => endState(() => Refresh(() => ChooseDataRemoval(cleanStart)));
+            if (uninstall)
+            {
+                Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(state!), "OpenVersus was uninstalled.", then: () => Refresh(AfterUninstall));
+            }
+            else
+            {
+                AfterUninstall();
+            }
         }
-        rml.Append("<div class=\"card\"><p class=\"strong\">Roll back to how it was the first time</p>")
-            .Append($"<p class=\"muted\">This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before MVS Buddy first changed it: what it had then comes back, "
-                + "the mod's files and the loader that were not here then go, and other files added since stay. Undo can undo it.</p>")
-            .Append(Button("Roll back", () => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(s, progress, ui.Closing),
-                "This copy is back to how it was the first time."), openVersusHere ? "" : "primary")).Append("</div>");
+        void Card(string title, string text, string button, Action go) =>
+            rml.Append($"<div class=\"card\"><p class=\"strong\">{Html.Text(title)}</p><p class=\"muted\">{Html.Text(text)}</p>{Button(button, go)}</div>");
+
+        if (firstLook is { } at)
+        {
+            Card("How it was the first time", $"This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before MVS Buddy first changed it: what it had then comes back, "
+                + "the mod's files and the loader that were not here then go, and other files added since stay.", "Leave it as it was the first time",
+                () => Run(next => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(state!, progress, ui.Closing),
+                    "This copy is back to how it was the first time.", then: next)));
+        }
+        if (kept.Any(k => k.Kind == SetAsideKind.MvsInfinite) && !MvsInfiniteLive(s))
+        {
+            Card("MVS Infinite", "MVS Infinite, set aside, goes back where it was, with its paks.", "Leave it with MVS Infinite",
+                () => Run(next => Prepare("Put MVS Infinite back?", progress => buddy.States.PreparePutBack(state!, SetAsideKind.MvsInfinite, progress, ui.Closing),
+                    "MVS Infinite is back.", then: next)));
+        }
+        if (kept.Any(k => k.Kind == SetAsideKind.Rest))
+        {
+            Card("What a clean start set aside", "The other mods, tools and backups a clean start set aside go back where they were.", "Leave it with those back",
+                () => Run(next => Prepare("Put back what a clean start set aside?", progress => buddy.States.PreparePutBack(state!, SetAsideKind.Rest, progress, ui.Closing),
+                    "What a clean start set aside is back.", then: next)));
+        }
+        if (cleanStartUnavailable == null)
+        {
+            Card("Stock, as the store installed it", "A clean start: everything the game did not ship is set aside in MVS Buddy's folder. "
+                + "If you then delete MVS Buddy's files, what was set aside goes with them.", "Leave it stock",
+                () => Run(next =>
+                {
+                    Show(Working("Looking through the game's folder..."));
+                    ui.Run(() => Task.FromResult(buddy.Stock.Read(state!)), report => ShowCleanStart(report, [ExtraKind.MvsInfinite, ExtraKind.Other], next), Failed);
+                }, cleanStart: true));
+        }
+        Card("As it is now", uninstall ? "Nothing more changes in the game's folder once OpenVersus is gone." : "Nothing changes in the game's folder.",
+            uninstall ? "Leave it as it is, without OpenVersus" : "Leave it as it is", () => Run(next => next()));
         rml.Append($"<div class=\"actions\">{Button("Cancel", ShowGame)}</div>");
         Show(rml.ToString());
+    }
+
+    // The last step: MVS Buddy's own files, which only this deletes, and only at the person's say-so.
+    private void ChooseDataRemoval(bool cleanStartJustRan)
+    {
+        actions.Clear();
+        var rml = new StringBuilder("<h2>MVS Buddy's own files</h2>")
+            .Append($"<p>Everything MVS Buddy keeps, for every copy of the game, is in {Html.Text(buddy.DataDirectory)}: kept states, what clean starts set aside, "
+                + "paks, the release cache, downloads and logs" + (OperatingSystem.IsLinux() ? ", and its entry in the applications menu." : ".") + "</p>");
+        if (cleanStartJustRan)
+        {
+            rml.Append("<p class=\"bad\">What the clean start just set aside is in there too: deleting MVS Buddy's files deletes it for good.</p>");
+        }
+        rml.Append("<p>Deleting them means nothing kept and no undo, for any copy. Keeping them costs disk space and nothing else.</p>")
+            .Append($"<div class=\"actions\">{Button("Delete MVS Buddy's files", ChoosePreferences, "primary")}{Button("Keep them", () =>
+            {
+                message = ("Done. MVS Buddy's files are kept.", false);
+                Reload();
+            })}</div>");
+        Show(rml.ToString());
+    }
+
+    private void ChoosePreferences()
+    {
+        actions.Clear();
+        Show($"<h2>The preferences too?</h2><p>{Html.Text(Preferences.FileName)} holds your answers to MVS Buddy's questions (the menu entry). "
+            + "Deleted, they are asked again if MVS Buddy ever runs here again.</p>"
+            + $"<div class=\"actions\">{Button("Delete the preferences too", () => RemoveData(keepPreferences: false), "primary")}{Button("Keep the preferences", () => RemoveData(keepPreferences: true))}</div>");
+    }
+
+    private void RemoveData(bool keepPreferences)
+    {
+        Show(Working("Deleting MVS Buddy's files..."));
+        ui.Run(() => Task.FromResult(buddy.RemoveData(keepPreferences)), removal =>
+        {
+            actions.Clear();
+            var rml = new StringBuilder("<h2>Done</h2><p>MVS Buddy's files are deleted" + (keepPreferences ? ", except the preferences." : ".") + "</p>");
+            if (removal.Left.Count > 0)
+            {
+                rml.Append($"<p class=\"muted\">Still here, until MVS Buddy is closed: {Html.Text(string.Join("; ", removal.Left))}</p>");
+            }
+            rml.Append($"<div class=\"actions\">{Button("Close MVS Buddy", window.RequestExit, "primary")}{Button("Back to the game", Reload)}</div>");
+            Show(rml.ToString());
+        }, Failed);
     }
 
     // MVS Infinite is live: a plugin of its name, which the reader finds only when it is there. Every switch button hangs
@@ -836,7 +920,7 @@ internal sealed class MainScreen
     }
 
     // The files the game did not ship, by whose they seem to be, each kind kept or set aside as the person picks.
-    private void ShowCleanStart(StockReport report, HashSet<ExtraKind> setAside)
+    private void ShowCleanStart(StockReport report, HashSet<ExtraKind> setAside, Action? then = null)
     {
         actions.Clear();
         var s = state!;
@@ -880,7 +964,7 @@ internal sealed class MainScreen
                     {
                         setAside.Add(kind);
                     }
-                    ShowCleanStart(report, setAside);
+                    ShowCleanStart(report, setAside, then);
                 }, keep != aside ? "tab on" : "tab"));
             }
             rml.Append("</div>");
@@ -897,7 +981,12 @@ internal sealed class MainScreen
         if (setAside.Any(k => kinds.Any(x => x.Item1 == k)))
         {
             var picked = report.Extras.Where(e => setAside.Contains(e.Kind)).ToList();
-            rml.Append(Button("Continue", () => Prepare("Clean start?", _ => buddy.States.PrepareSetAside(s, picked), "The clean start is done."), "primary"));
+            rml.Append(Button("Continue", () => Prepare("Clean start?", _ => buddy.States.PrepareSetAside(s, picked), "The clean start is done.", then: then), "primary"));
+        }
+        else if (then != null)
+        {
+            // A step of a flow with nothing to set aside: the copy is stock already, so the flow goes on.
+            rml.Append(Button("Continue", then, "primary"));
         }
         else
         {
@@ -988,7 +1077,7 @@ internal sealed class MainScreen
 
     // Gets a change ready off this thread (it reads the game's folder and the copy's store, and may checksum paks), then
     // asks before making it.
-    private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done, (string Label, Action Do)? instead = null)
+    private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done, (string Label, Action Do)? instead = null, Action? then = null)
     {
         message = null;
         var work = new Work();
@@ -1001,7 +1090,7 @@ internal sealed class MainScreen
         ui.Run(() => Task.FromResult(prepare(progress)), change =>
         {
             work.On = false;
-            Confirm(title, change, done, instead: instead);
+            Confirm(title, change, done, instead: instead, then: then);
         }, e =>
         {
             work.On = false;
@@ -1067,7 +1156,7 @@ internal sealed class MainScreen
     // What a change will do, as the change itself says, and the go-ahead; a change that cannot be made says why instead. One
     // that will probably break something (a pak it cannot put back) says so here, is asked about a second time, and may offer
     // another way out (deleting the undo point rather than undoing without the pak).
-    private void Confirm(string title, PreparedChange change, string done, string go = "Go ahead", (string Label, Action Do)? instead = null)
+    private void Confirm(string title, PreparedChange change, string done, string go = "Go ahead", (string Label, Action Do)? instead = null, Action? then = null)
     {
         actions.Clear();
         var rml = new StringBuilder($"<h2>{Html.Text(title)}</h2><ul>");
@@ -1087,24 +1176,24 @@ internal sealed class MainScreen
         else if (change.Risk is string risk)
         {
             rml.Append($"<p class=\"message bad\">{Html.Text(risk)}</p>");
-            rml.Append($"<div class=\"actions\">{Button(go, () => ConfirmRisk(title, change, done, go, instead), "primary")}"
+            rml.Append($"<div class=\"actions\">{Button(go, () => ConfirmRisk(title, change, done, go, instead, then), "primary")}"
                 + (instead is { } other ? Button(other.Label, other.Do) : "") + $"{Button("Cancel", ShowGame)}</div>");
         }
         else
         {
-            rml.Append($"<div class=\"actions\">{Button(go, () => Apply(change, done), "primary")}{Button("Cancel", ShowGame)}</div>");
+            rml.Append($"<div class=\"actions\">{Button(go, () => Apply(change, done, then), "primary")}{Button("Cancel", ShowGame)}</div>");
         }
         Show(rml.ToString());
     }
 
     // The second time of asking, for a change that will probably break something: what, spelled out, then it is the
     // person's to make.
-    private void ConfirmRisk(string title, PreparedChange change, string done, string go, (string Label, Action Do)? instead)
+    private void ConfirmRisk(string title, PreparedChange change, string done, string go, (string Label, Action Do)? instead, Action? then)
     {
         actions.Clear();
         Show($"<h2>Really? {Html.Text(title)}</h2><p class=\"message bad\">{Html.Text(change.Risk!)}</p>"
             + "<p>This is asked twice because it will probably leave the game not working until that is done. If that is what you want, go ahead.</p>"
-            + $"<div class=\"actions\">{Button($"Yes, {LowerFirst(go)} anyway", () => Apply(change, done), "primary")}{Button("Back", () => Confirm(title, change, done, go, instead))}</div>");
+            + $"<div class=\"actions\">{Button($"Yes, {LowerFirst(go)} anyway", () => Apply(change, done, then), "primary")}{Button("Back", () => Confirm(title, change, done, go, instead, then))}</div>");
     }
 
     private static string LowerFirst(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text.Substring(1);
@@ -1125,7 +1214,8 @@ internal sealed class MainScreen
         }, Failed);
     }
 
-    private void Apply(PreparedChange change, string done)
+    // then: what comes after a change made as one step of a flow (an uninstall), instead of the copy's screen.
+    private void Apply(PreparedChange change, string done, Action? then = null)
     {
         var work = new Work();
         void Render()
@@ -1142,6 +1232,11 @@ internal sealed class MainScreen
         {
             work.On = false;
             message = (done, false);
+            if (then != null)
+            {
+                then();
+                return;
+            }
             offerMenuEntry = OperatingSystem.IsLinux() && buddy.Preferences.MenuEntry == null;
             Reload();
         }, e =>
@@ -1149,7 +1244,7 @@ internal sealed class MainScreen
             work.On = false;
             if (e is ChangeException { DeniedFolders.Count: > 0 } denied && buddy.Permissions.CanAsk)
             {
-                ShowDenied(denied, change, done);
+                ShowDenied(denied, change, done, then);
             }
             else if (e is ChangeException refused)
             {
@@ -1164,22 +1259,22 @@ internal sealed class MainScreen
     }
 
     // Windows refused the change in some folders: ask for exactly those, then make the same change again.
-    private void ShowDenied(ChangeException denied, PreparedChange change, string done)
+    private void ShowDenied(ChangeException denied, PreparedChange change, string done, Action? then)
     {
         actions.Clear();
         Show($"<p class=\"message bad\">{Html.Text(denied.Message)}</p>"
             + "<p>Windows can allow this account to change files there. It asks an administrator once, then MVS Buddy does this again.</p>"
-            + $"<div class=\"actions\">{Button("Allow and try again", () => Allow(denied.DeniedFolders, change, done), "primary")}{Button("Cancel", Reload)}</div>");
+            + $"<div class=\"actions\">{Button("Allow and try again", () => Allow(denied.DeniedFolders, change, done, then), "primary")}{Button("Cancel", Reload)}</div>");
     }
 
-    private void Allow(IReadOnlyList<string> folders, PreparedChange change, string done)
+    private void Allow(IReadOnlyList<string> folders, PreparedChange change, string done, Action? then)
     {
         Show(Working("Asking Windows for permission... Answer the prompt Windows shows."));
         ui.Run(() => buddy.Permissions.AskAsync(folders), result =>
         {
             if (result.Outcome == PermissionOutcome.Granted)
             {
-                Apply(change, done);
+                Apply(change, done, then);
                 return;
             }
             message = (result.Message, true);

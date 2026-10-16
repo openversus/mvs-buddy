@@ -127,12 +127,17 @@ public sealed class ChangePlan
     /// <summary>Counts <paramref name="folder"/> among the folders the change writes, for <see cref="DeniedFolders"/>, when something else writes it.</summary>
     internal void Writes(string folder) => folders.Add(folder);
 
-    /// <summary>Moves a file, which must not be at <paramref name="to"/> already; undone by moving it back.</summary>
+    /// <summary>Moves a file, which must not be at <paramref name="to"/> already, and takes the mark of the web off it where it lands (Windows); undone by moving it back.</summary>
     internal void Move(string from, string to)
     {
         folders.Add(Path.GetDirectoryName(from)!);
         folders.Add(Path.GetDirectoryName(to)!);
-        steps.Add(new Step($"Move {from} to {to}", Path.GetFileName(from), () => FileMoves.Move(from, to, host.IsWindows), () => FileMoves.Move(to, from, host.IsWindows)));
+        steps.Add(new Step($"Move {from} to {to}", Path.GetFileName(from), () =>
+        {
+            FileMoves.Move(from, to, host.IsWindows);
+            // A pak a person downloaded by hand carries the mark; a copy across drives carries it along. Placed, it is clean.
+            Installer.RemoveMarkOfTheWeb(to, null);
+        }, () => FileMoves.Move(to, from, host.IsWindows)));
     }
 
     /// <summary>Writes a file that is not there yet; undone by deleting it.</summary>
