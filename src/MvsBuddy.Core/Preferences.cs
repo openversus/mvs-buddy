@@ -25,6 +25,14 @@ public sealed class Preferences
         # first change; "yes" keeps the entry pointing at MVS Buddy wherever it is; "no" leaves your menu alone.
         Entry = "ask" # "ask", "yes" or "no"
 
+        [Updates]
+        # Whether MVS Buddy looks for a newer MVS Buddy when it starts (one request to GitHub) and says so on the game's
+        # screen, with a button. With "no", the game's screen has a button to look when you want to.
+        Check = "yes" # "yes" or "no"
+        # Whether a newer MVS Buddy is downloaded and started without asking. Off unless you turn it on: MVS Buddy never
+        # replaces itself under you by default.
+        Install = "no" # "yes" or "no"
+
         """;
 
     private readonly string file;
@@ -59,6 +67,24 @@ public sealed class Preferences
         "no" or "false" => false,
         _ => null,
     };
+
+    /// <summary>Whether MVS Buddy looks for a newer MVS Buddy at startup. On unless the person turned it off.</summary>
+    public bool CheckUpdates => !IsNo(Get("Updates", "Check"));
+
+    /// <summary>Whether a newer MVS Buddy is downloaded and started without asking. Off unless the person turned it on.</summary>
+    public bool AutoUpdate => IsYes(Get("Updates", "Install"));
+
+    /// <exception cref="IOException">The file could not be written.</exception>
+    /// <exception cref="UnauthorizedAccessException">The file could not be written.</exception>
+    public void SetCheckUpdates(bool wanted) => Set("Updates", "Check", new StringValueSyntax(wanted ? "yes" : "no"));
+
+    /// <exception cref="IOException">The file could not be written.</exception>
+    /// <exception cref="UnauthorizedAccessException">The file could not be written.</exception>
+    public void SetAutoUpdate(bool wanted) => Set("Updates", "Install", new StringValueSyntax(wanted ? "yes" : "no"));
+
+    private static bool IsYes(string? value) => value?.ToLowerInvariant() is "yes" or "true";
+
+    private static bool IsNo(string? value) => value?.ToLowerInvariant() is "no" or "false";
 
     /// <summary>Records the answer to <see cref="MenuEntry"/>.</summary>
     /// <exception cref="IOException">The file could not be written.</exception>

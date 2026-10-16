@@ -18,6 +18,7 @@ public sealed class BuddyBuilder
     private HttpClient? http;
     private GitHubRepository clientReleases = new("openversus", "ovs-client");
     private GitHubRepository paks = new("openversus", "ovs-paks");
+    private GitHubRepository buddyReleases = new("openversus", "mvs-buddy");
     private string testingPaksTag = "paks-current";
     private HostSystem? host;
     private AsiLoaderPin loaderPin = AsiLoaderPin.Default;
@@ -42,6 +43,13 @@ public sealed class BuddyBuilder
     public BuddyBuilder Http(HttpClient client)
     {
         http = client ?? throw new ArgumentNullException(nameof(client));
+        return this;
+    }
+
+    /// <summary>The repository whose releases are MVS Buddy's own, for the update check. Default <c>openversus/mvs-buddy</c>.</summary>
+    public BuddyBuilder BuddyReleases(string owner, string repository)
+    {
+        buddyReleases = new GitHubRepository(owner, repository);
         return this;
     }
 
@@ -83,7 +91,7 @@ public sealed class BuddyBuilder
     {
         bool ownsHttp = http == null;
         var client = http ?? new HttpClient();
-        var releases = new ReleaseCatalog(client, clientReleases, paks, testingPaksTag, loggerFactory.CreateLogger<ReleaseCatalog>());
+        var releases = new ReleaseCatalog(client, clientReleases, paks, buddyReleases, testingPaksTag, loggerFactory.CreateLogger<ReleaseCatalog>());
         var system = host ?? HostSystem.Current();
         var games = new GameFinder(system, loggerFactory.CreateLogger<GameFinder>());
         var installs = new InstallReader(system, loaderPin, loggerFactory.CreateLogger<InstallReader>());
@@ -96,7 +104,8 @@ public sealed class BuddyBuilder
         var log = loggerFactory.CreateLogger<BuddyBuilder>();
         WipeOldHeld(system, log);
         CleanPakSets(system, log);
-        return new Buddy(system, releases, games, installs, downloads, stock, permissions, cache, pakStore, states, new Preferences(system), ownsHttp ? client : null);
+        var updates = new Updates(system, releases, downloads, loggerFactory.CreateLogger<Updates>());
+        return new Buddy(system, releases, games, installs, downloads, stock, permissions, cache, pakStore, states, new Preferences(system), updates, ownsHttp ? client : null);
     }
 
     // The pak sets, seen clean at every startup: the mark of the web comes off any pak kept here (Windows), whichever way it

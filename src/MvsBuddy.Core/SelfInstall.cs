@@ -12,7 +12,7 @@ namespace MvsBuddy;
 /// </summary>
 public static class SelfInstall
 {
-    /// <summary>What a startup does next, as <see cref="Decide"/> found.</summary>
+    /// <summary>What a startup does next, as <see cref="Decide(string, string, Func{string, string?})"/> found.</summary>
     public enum Outcome
     {
         /// <summary>This is the installed copy (or the person asked to run in place): carry on.</summary>
@@ -75,10 +75,20 @@ public static class SelfInstall
             Changes.Installer.RemoveMarkOfTheWeb(fresh, null);
             if (host.IsWindows)
             {
-                // No atomic replace of a file that may be running: delete (refused while it runs), then move.
-                if (File.Exists(installed))
+                // No atomic replace of a file that may be running: delete, then move. The one expected holder of the
+                // file is the copy that just started this one and is on its way out (an update), so a refusal is
+                // retried for a while before it counts.
+                var until = DateTime.UtcNow.AddSeconds(10);
+                while (File.Exists(installed))
                 {
-                    File.Delete(installed);
+                    try
+                    {
+                        File.Delete(installed);
+                    }
+                    catch (IOException) when (DateTime.UtcNow < until)
+                    {
+                        System.Threading.Thread.Sleep(250);
+                    }
                 }
                 File.Move(fresh, installed);
             }
@@ -131,6 +141,34 @@ public static class SelfInstall
     {
         var info = new ProcessStartInfo(executable, Quote(args)) { UseShellExecute = false };
         Process.Start(info)?.Dispose();
+    }
+
+    /// <summary>
+    /// Deletes what an update fetched (<c>downloads/update/</c>), once the installed copy is the one running: the new
+    /// version has put itself in place, so the unpacked copy it ran from is spent. Nothing when running from in there.
+    /// </summary>
+    public static void ForgetFetchedUpdates(string running) => ForgetFetchedUpdates(HostSystem.Current(), running);
+
+    internal static void ForgetFetchedUpdates(HostSystem host, string running)
+    {
+        if (string.IsNullOrEmpty(host.DataDirectory))
+        {
+            return;
+        }
+        string folder = Path.Combine(host.DataDirectory, "downloads", "update");
+        if (!Directory.Exists(folder) || Path.GetFullPath(running).StartsWith(Path.GetFullPath(folder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            // Spent files in MVS Buddy's own folder: not worth more than another try next time.
+            _ = e;
+        }
     }
 
     /// <summary>
@@ -192,7 +230,7 @@ public static class SelfInstall
         return string.Equals(x, y, host.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
-    private static void Chmod(string path, int mode)
+    internal static void Chmod(string path, int mode)
     {
         if (chmod(path, mode) != 0)
         {

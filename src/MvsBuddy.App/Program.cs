@@ -68,6 +68,10 @@ if (bundled && !args.Contains("--here") && Environment.ProcessPath is string run
                 log.LogInformation("Installed this copy at {Path} and starting it", installed);
                 SelfInstall.Start(installed, args);
                 return 0;
+            default:
+                // The installed copy, running: an update it may have come from is spent.
+                SelfInstall.ForgetFetchedUpdates(running);
+                break;
         }
     }
     catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.ComponentModel.Win32Exception)
@@ -116,6 +120,7 @@ try
     var ui = new UiThread(window);
     var screen = new MainScreen(window, ui, buddy, version.Split('+')[0], loggerFactory.CreateLogger<MainScreen>());
     screen.Start(gameFolder == null ? null : buddy.Games.Choose(gameFolder));
+    screen.StartUpdateCheck();
     Action? afterFrame = screenshot == null || screenshotWhen != null ? null : Screenshot.When(window, ui, screenshot);
     if (clicks != null)
     {

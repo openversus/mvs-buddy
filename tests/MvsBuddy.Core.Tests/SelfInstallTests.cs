@@ -77,4 +77,18 @@ public sealed class SelfInstallTests : IDisposable
     [InlineData(new[] { "C:\\Games\\" }, "C:\\Games\\")]
     [InlineData(new[] { "C:\\Games Dir\\" }, "\"C:\\Games Dir\\\\\"")]
     public void Arguments_are_quoted_the_way_they_are_split_back(string[] args, string expected) => Assert.Equal(expected, SelfInstall.Quote(args));
+
+    [Fact]
+    public void What_an_update_fetched_is_forgotten_once_the_installed_copy_runs_but_not_while_running_from_it()
+    {
+        string fetched = tree.File("new build", "data", "downloads", "update", "2026.10.17.01", "MvsBuddy");
+        tree.File("a download", "data", "downloads", "abc", "x.zip");
+
+        SelfInstall.ForgetFetchedUpdates(Host(), fetched);
+        Assert.True(File.Exists(fetched));
+
+        SelfInstall.ForgetFetchedUpdates(Host(), Installed);
+        Assert.False(Directory.Exists(tree.Path("data", "downloads", "update")));
+        Assert.True(File.Exists(tree.Path("data", "downloads", "abc", "x.zip")));
+    }
 }

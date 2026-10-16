@@ -66,4 +66,23 @@ public sealed class PreferencesTests : IDisposable
         Assert.True(Load().MenuEntry);
         Assert.Null(Load().Problem);
     }
+
+    [Fact]
+    public void Looking_for_updates_is_on_and_installing_them_is_off_until_the_person_says_otherwise()
+    {
+        var host = new HostSystem { Home = tree.Path("home"), DataDirectory = tree.Path("data") };
+        var preferences = new Preferences(host);
+        Assert.True(preferences.CheckUpdates);
+        Assert.False(preferences.AutoUpdate);
+
+        preferences.SetCheckUpdates(false);
+        preferences.SetAutoUpdate(true);
+
+        var again = new Preferences(host);
+        Assert.False(again.CheckUpdates);
+        Assert.True(again.AutoUpdate);
+        string text = File.ReadAllText(tree.Path("data", "preferences.toml"));
+        Assert.Contains("Check = \"no\"", text);
+        Assert.Contains("Install = \"yes\"", text);
+    }
 }

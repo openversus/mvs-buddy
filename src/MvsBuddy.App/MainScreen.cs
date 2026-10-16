@@ -39,6 +39,11 @@ internal sealed class MainScreen
     private IReadOnlyList<SetAside> kept = [];
     private IReadOnlyList<LaunchOptionsAccount> launchOptions = [];
     private bool canUndo;
+    // The update check: once per run when the person wants one, else on their button; what it found, or that it found
+    // nothing newer, or how it failed.
+    private Update? update;
+    private string? updateNote;
+    private bool checkingUpdates;
     private DateTimeOffset? firstLook;
     private bool picking;
 
@@ -117,8 +122,35 @@ internal sealed class MainScreen
             + "and Tuggernuts can play the game too.</p>");
         rml.Append($"<p class=\"muted\">MVS Buddy keeps its own files and logs in: {Html.Text(BuddyBuilder.DefaultDataDirectory)}. Nothing the game reads during runtime is ever in there.</p>");
         rml.Append("<p class=\"muted\">Nobody is paid for any of this. OpenVersus is its own project, with its own developers (half of which happen to be me); MVS Buddy only installs it.</p>");
+        rml.Append(UpdateSettings());
         rml.Append($"<div class=\"actions\">{Button("License Notices", ShowNotices)}{Button("Back", Back, "primary")}</div>");
         Show(rml.ToString());
+    }
+
+    // The two update settings, each a pair of buttons with the current one lit: looking at startup (on unless turned
+    // off) and installing without asking (off unless turned on).
+    private string UpdateSettings()
+    {
+        var rml = new StringBuilder("<h3>Updates</h3>");
+        string Pair(string label, bool on, Action<bool> set) =>
+            $"<div class=\"row\"><span>{Html.Text(label)}</span> {Button("On", () => Setting(() => set(true)), on ? "primary small" : "small")}{Button("Off", () => Setting(() => set(false)), on ? "small" : "primary small")}</div>";
+        rml.Append(Pair("Look for a newer MVS Buddy at startup:", buddy.Preferences.CheckUpdates, buddy.Preferences.SetCheckUpdates));
+        rml.Append(Pair("Download and restart as the new version without asking:", buddy.Preferences.AutoUpdate, buddy.Preferences.SetAutoUpdate));
+        rml.Append($"<p class=\"muted\">Kept in {Html.Text(Preferences.FileName)} in MVS Buddy's folder. Looking is one request to GitHub; nothing is downloaded unless you say so here or on the button.</p>");
+        return rml.ToString();
+    }
+
+    private void Setting(Action set)
+    {
+        try
+        {
+            set();
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            message = ($"The setting could not be written ({e.Message}).", true);
+        }
+        ShowAbout();
     }
 
     // What MVS Buddy is made of and installs, each under its license; the texts are embedded in the executable.
@@ -395,6 +427,7 @@ internal sealed class MainScreen
         }
         rml.Append(Message());
         rml.Append(MenuEntryOffer());
+        rml.Append(UpdateSection());
 
         rml.Append("<div class=\"actions\">");
         if (s.Mod.Layout != ModLayout.None)
@@ -483,6 +516,108 @@ internal sealed class MainScreen
             rml.Append("</div></div>");
         }
         return rml.ToString();
+    }
+
+    // Looks for a newer MVS Buddy at startup when the person wants that (on unless turned off): one request, off this
+    // thread, and the game's screen says what it found. With the check off, the screen has a button for it instead.
+    public void StartUpdateCheck()
+    {
+        if (buddy.Preferences.CheckUpdates)
+        {
+            CheckForUpdates();
+        }
+    }
+
+    private void CheckForUpdates()
+    {
+        if (checkingUpdates)
+        {
+            return;
+        }
+        checkingUpdates = true;
+        updateNote = null;
+        ui.Run(() => buddy.Updates.CheckAsync(ui.Closing), found =>
+        {
+            checkingUpdates = false;
+            update = found;
+            updateNote = found == null ? $"MVS Buddy {version} is the newest." : null;
+            if (found != null && buddy.Preferences.AutoUpdate)
+            {
+                // Only ever at the person's standing say-so (off unless they turned it on).
+                DownloadUpdate(found);
+                return;
+            }
+            if (onGame)
+            {
+                ShowGame();
+            }
+        }, e =>
+        {
+            checkingUpdates = false;
+            updateNote = e is ReleaseCatalogException or OperationCanceledException ? $"Could not look for a newer MVS Buddy: {e.Message}" : null;
+            log.LogWarning(e, "The update check failed");
+            if (onGame)
+            {
+                ShowGame();
+            }
+        });
+    }
+
+    // A newer MVS Buddy, said with a button, never applied on its own; or the button to look, when looking at startup
+    // is off; or what the last look found.
+    private string UpdateSection()
+    {
+        var rml = new StringBuilder();
+        if (update is { } newer)
+        {
+            rml.Append($"<div class=\"card\"><p class=\"strong\">MVS Buddy {Html.Text(newer.Tag)} is out; this is {Html.Text(version)}.</p>")
+                .Append("<p class=\"muted\">Download it and MVS Buddy restarts as the new version, with everything as it is now.</p><div class=\"row\">")
+                .Append(Button("Download and restart", () => DownloadUpdate(newer), "primary")).Append("</div></div>");
+        }
+        else if (!buddy.Preferences.CheckUpdates)
+        {
+            rml.Append("<div class=\"row\">").Append(checkingUpdates ? "<button class=\"off\">Looking...</button>" : Button("Check for updates", CheckForUpdates, "small"));
+            if (updateNote != null)
+            {
+                rml.Append($" <span class=\"muted\">{Html.Text(updateNote)}</span>");
+            }
+            rml.Append("</div>");
+        }
+        // With looking on, a look that failed (offline) says nothing here: the log has it, and the screen already says
+        // when the releases could not be read.
+        return rml.ToString();
+    }
+
+    // Fetches the newer MVS Buddy and starts it in this one's place: the new copy puts itself in MVS Buddy's folder,
+    // being newer, and runs from there.
+    private void DownloadUpdate(Update newer)
+    {
+        var work = new Work();
+        void Render()
+        {
+            actions.Clear();
+            Show($"<h2>Updating to MVS Buddy {Html.Text(newer.Tag)}</h2>{WorkingRml(work, "Starting...", "MVS Buddy restarts as the new version when this is done.")}");
+        }
+        var progress = Watch(work, Render);
+        ui.Run(() => buddy.Updates.DownloadAsync(newer, progress, ui.Closing), executable =>
+        {
+            work.On = false;
+            log.LogInformation("Starting MVS Buddy {Tag} at {Path} and exiting", newer.Tag, executable);
+            Updates.Start(executable, Environment.GetCommandLineArgs().Skip(1));
+            window.RequestExit();
+        }, e =>
+        {
+            work.On = false;
+            if (e is DownloadException or ReleaseCatalogException or OperationCanceledException or System.ComponentModel.Win32Exception)
+            {
+                message = ($"The update could not be fetched or started: {e.Message}", true);
+                ShowGame();
+            }
+            else
+            {
+                Failed(e);
+            }
+        });
     }
 
     // Asked once, after the first change, and answered either way for good; the answer can be changed later where the

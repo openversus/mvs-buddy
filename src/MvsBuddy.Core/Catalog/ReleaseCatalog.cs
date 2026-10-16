@@ -22,16 +22,29 @@ public sealed class ReleaseCatalog
     private readonly HttpClient http;
     private readonly GitHubRepository clientReleases;
     private readonly GitHubRepository paks;
+    private readonly GitHubRepository buddy;
     private readonly string testingPaksTag;
     private readonly ILogger<ReleaseCatalog> log;
 
-    internal ReleaseCatalog(HttpClient http, GitHubRepository clientReleases, GitHubRepository paks, string testingPaksTag, ILogger<ReleaseCatalog> log)
+    internal ReleaseCatalog(HttpClient http, GitHubRepository clientReleases, GitHubRepository paks, GitHubRepository buddy, string testingPaksTag, ILogger<ReleaseCatalog> log)
     {
         this.http = http;
         this.clientReleases = clientReleases;
         this.paks = paks;
+        this.buddy = buddy;
         this.testingPaksTag = testingPaksTag;
         this.log = log;
+    }
+
+    /// <summary>MVS Buddy's own latest release (GitHub's "latest": the newest that is not a prerelease), with its assets.</summary>
+    /// <exception cref="ReleaseCatalogException">GitHub could not be reached, refused, or has no release.</exception>
+    public async Task<Release> LatestBuddyReleaseAsync(CancellationToken cancellationToken = default)
+    {
+        var latest = await GetAsync($"repos/{buddy.Owner}/{buddy.Name}/releases/latest", GitHubJsonContext.Default.GitHubRelease,
+            $"{buddy} has no release yet.", cancellationToken).ConfigureAwait(false);
+        var release = ToRelease(latest, Channel.Prod);
+        log.LogInformation("MVS Buddy's latest release is {Tag} ({Count} assets)", release.Tag, release.Assets.Count);
+        return release;
     }
 
     /// <summary>

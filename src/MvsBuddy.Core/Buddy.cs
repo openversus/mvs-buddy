@@ -12,10 +12,11 @@ public sealed class Buddy : IDisposable
     private readonly HttpClient? ownedHttp;
     private readonly HostSystem host;
 
-    internal Buddy(HostSystem host, ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, Preferences preferences, HttpClient? ownedHttp)
+    internal Buddy(HostSystem host, ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, Preferences preferences, Updates updates, HttpClient? ownedHttp)
     {
         this.host = host;
         Preferences = preferences;
+        Updates = updates;
         States = states;
         Cache = cache;
         Paks = paks;
@@ -57,6 +58,9 @@ public sealed class Buddy : IDisposable
 
     /// <summary>The channel paks, kept outside git, a set per channel.</summary>
     internal PakStore Paks { get; }
+
+    /// <summary>A newer MVS Buddy, looked for and fetched at the person's say-so.</summary>
+    public Updates Updates { get; }
 
     /// <summary>Where MVS Buddy keeps everything of its own; empty when it has nowhere.</summary>
     public string DataDirectory => host.DataDirectory;
