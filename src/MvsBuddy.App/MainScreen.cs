@@ -763,9 +763,17 @@ internal sealed class MainScreen
             var rml = new StringBuilder("<h2>Done</h2><p>MVS Buddy's files are deleted" + (keepPreferences ? ", except the preferences." : ".") + "</p>");
             if (removal.Left.Count > 0)
             {
-                rml.Append($"<p class=\"muted\">Still here, until MVS Buddy is closed: {Html.Text(string.Join("; ", removal.Left))}</p>");
+                rml.Append($"<p class=\"muted\">Still here while MVS Buddy runs, and deleted ten seconds after it closes: {Html.Text(string.Join("; ", removal.Left))}</p>");
             }
-            rml.Append($"<div class=\"actions\">{Button("Close MVS Buddy", window.RequestExit, "primary")}{Button("Back to the game", Reload)}</div>");
+            // What could not go while MVS Buddy runs (its own program file, the log) goes ten seconds after it closes (Windows).
+            rml.Append($"<div class=\"actions\">{Button("Close MVS Buddy", () =>
+            {
+                if (removal.Left.Count > 0)
+                {
+                    SelfInstall.DeleteAfterExit(buddy.DataDirectory);
+                }
+                window.RequestExit();
+            }, "primary")}{Button("Back to the game", Reload)}</div>");
             Show(rml.ToString());
         }, Failed);
     }
