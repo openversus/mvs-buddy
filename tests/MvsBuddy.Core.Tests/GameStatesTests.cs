@@ -393,6 +393,57 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task A_kept_state_that_brings_no_loader_back_gets_the_pinned_one_added_and_undo_takes_it_out()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        string loader = Path.Combine(Win64, "version.dll");
+        Assert.True(File.Exists(loader));
+        // The person deleted the loader by hand before turning OpenVersus off: the kept state has none.
+        File.Delete(loader);
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        Assert.False(File.Exists(loader));
+        int fetches = Requests("/ual/");
+
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod);
+
+        Assert.Null(on.Refused);
+        Assert.Null(on.Risk);
+        Assert.Contains($"Ultimate ASI Loader {Pin().Version} is added as version.dll: nothing here would load OpenVersus otherwise.", on.Summary);
+        on.Apply();
+        var after = buddy.Installs.Read(Game());
+        Assert.True(after.Loaders.Single().IsPinnedBuild);
+        Assert.Equal("MIT License\n", Read(Path.Combine(Win64, "LICENSE_Ultimate_ASI_Loader.txt")));
+        // Out of the cache, which holds the release with that very build: nothing downloaded.
+        Assert.Equal(fetches, Requests("/ual/"));
+
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.False(File.Exists(loader));
+        Assert.Equal(ModLayout.None, buddy.Installs.Read(Game()).Mod.Layout);
+    }
+
+    [Fact]
+    public async Task The_added_loader_takes_the_other_name_when_another_programs_file_holds_the_usual_one()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        File.Delete(Path.Combine(Win64, "version.dll"));
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        // Since then, another program's file under the loader's usual name.
+        tree.File("MZ some other program", [.. Rel(Win64), "version.dll"]);
+
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod);
+        Assert.Contains($"Ultimate ASI Loader {Pin().Version} is added as xinput1_3.dll: nothing here would load OpenVersus otherwise.", on.Summary);
+        on.Apply();
+
+        Assert.Equal("MZ some other program", Read(Path.Combine(Win64, "version.dll")));
+        Assert.True(buddy.Installs.Read(Game()).Loaders.Single(l => l.IsUltimateAsiLoader).IsPinnedBuild);
+        Assert.Equal("xinput1_3.dll", buddy.Installs.Read(Game()).Loaders.Single(l => l.IsUltimateAsiLoader).FileName);
+    }
+
+    [Fact]
     public async Task Without_github_a_testing_state_goes_live_with_the_paks_it_had_and_says_so()
     {
         Game();

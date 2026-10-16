@@ -172,6 +172,37 @@ internal sealed class ReleaseCache
         }
     }
 
+    /// <summary>
+    /// The pinned Ultimate ASI Loader and its license, as bytes: out of any cached release that holds that build, else
+    /// downloaded and checked. Waits for the download: the changes that need it are got ready off the window's thread.
+    /// </summary>
+    /// <exception cref="DownloadException">It could not be fetched or did not match.</exception>
+    internal (byte[] Dll, byte[] License) PinnedLoader(IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        var store = Store();
+        foreach (string commit in store.Tags().Values)
+        {
+            string tree = store.TreeOf(commit);
+            if (Info(store, tree)?.Loader?.Sha256 == pin.DllSha256
+                && store.Read(tree, LoaderFolder + "/" + pin.DllName) is byte[] dll && store.Read(tree, LoaderFolder + "/" + Installer.LicenseName) is byte[] license)
+            {
+                return (dll, license);
+            }
+        }
+        progress?.Report($"Downloading Ultimate ASI Loader {pin.Version}");
+        string zip = downloads.FetchAsync(pin.ZipUrl, Path.GetFileName(pin.ZipUrl.AbsolutePath), pin.ZipSha256, null, cancellationToken).GetAwaiter().GetResult();
+        string licensePath = downloads.FetchAsync(pin.LicenseUrl, Installer.LicenseName, pin.LicenseSha256, null, cancellationToken).GetAwaiter().GetResult();
+        string stage = Path.Combine(DataDirectory(), "stage", Guid.NewGuid().ToString("N"));
+        try
+        {
+            return (File.ReadAllBytes(Installer.ExtractLoader(zip, pin, stage)), File.ReadAllBytes(licensePath));
+        }
+        finally
+        {
+            DeleteFolder(stage);
+        }
+    }
+
     /// <summary>What the cache wrote down about the release in <paramref name="tree"/>; null when it cannot be read.</summary>
     internal static CachedReleaseInfo? Info(GitStore store, string tree)
     {

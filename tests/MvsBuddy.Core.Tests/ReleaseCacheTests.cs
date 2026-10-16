@@ -178,4 +178,28 @@ public sealed class ReleaseCacheTests : IDisposable
         }
         return memory.ToArray();
     }
+
+    [Fact]
+    public async Task The_pinned_loader_is_downloaded_once_when_no_cached_release_holds_it_and_read_from_the_cache_after()
+    {
+        var buddy = Buddy();
+        int Fetches() => server.Requests.Count(r => r.RequestUri!.AbsolutePath.StartsWith("/ual/", StringComparison.Ordinal));
+
+        var (dll, license) = buddy.Cache.PinnedLoader(null, default);
+        Assert.Equal(LoaderDll, dll);
+        Assert.Equal(License, license);
+        Assert.Equal(2, Fetches());
+        // The download is kept by checksum, so asking again fetches nothing.
+        buddy.Cache.PinnedLoader(null, default);
+        Assert.Equal(2, Fetches());
+
+        // Once a release is cached, its loader is read from the cache.
+        await buddy.Cache.GetAsync(Release("2026.10.14.1", Channel.Prod, "OpenVersus_2026.10.14.1.asi"));
+        int after = Fetches();
+        Directory.Delete(tree.Path("data", "downloads"), recursive: true);
+        var (cachedDll, cachedLicense) = buddy.Cache.PinnedLoader(null, default);
+        Assert.Equal(LoaderDll, cachedDll);
+        Assert.Equal(License, cachedLicense);
+        Assert.Equal(after, Fetches());
+    }
 }

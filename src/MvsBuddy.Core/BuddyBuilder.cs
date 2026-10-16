@@ -93,6 +93,31 @@ public sealed class BuddyBuilder
         var cache = new ReleaseCache(system, downloads, loaderPin, loggerFactory.CreateLogger<ReleaseCache>());
         var pakStore = new PakStore(system, downloads, loggerFactory.CreateLogger<PakStore>());
         var states = new GameStates(system, releases, cache, pakStore, installs, stock, loaderPin, loggerFactory.CreateLogger<GameStates>());
+        WipeOldHeld(system, loggerFactory.CreateLogger<BuddyBuilder>());
         return new Buddy(releases, games, installs, downloads, stock, permissions, cache, pakStore, states, new Preferences(system), ownsHttp ? client : null);
+    }
+
+    // What the engine before the states repositories kept (held/ sets, until 2026-10-14) goes at startup, silently: nothing
+    // reads it any more, and converting it was not worth it for the few builds that made one. A failure to delete is logged.
+    private static void WipeOldHeld(HostSystem system, ILogger log)
+    {
+        if (string.IsNullOrEmpty(system.DataDirectory))
+        {
+            return;
+        }
+        string held = Path.Combine(system.DataDirectory, "held");
+        if (!Directory.Exists(held))
+        {
+            return;
+        }
+        try
+        {
+            Directory.Delete(held, recursive: true);
+            log.LogInformation("Deleted {Folder}: the layout before the states repositories, which nothing reads any more", held);
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            log.LogWarning(e, "Could not delete {Folder}", held);
+        }
     }
 }

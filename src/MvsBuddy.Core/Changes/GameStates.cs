@@ -977,23 +977,84 @@ public sealed class GameStates
         summary.AddRange(found.Lines);
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         // A loader the copy keeps (one was here at first sight) is taken out only when the state brings one back.
-        bool keepLoaders = KeepsLoaders(state, copy) && !owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
-        return new PreparedChange(summary, null, null, report => Change(report, state.Game,
-            mvsiAside ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
-            mvsiAside ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", null,
-            // MVS Infinite's paks stay where they are, unless it is set aside: then they leave as its set.
-            (_, live) => [.. found.Paks, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
-            (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p))).Concat(mvsi)
-                .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned))),
-            (store, before) =>
+        bool bringsLoader = owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
+        bool keepLoaders = KeepsLoaders(state, copy) && !bringsLoader;
+        // A state that brings no loader back, on a copy where none stays: nothing would load OpenVersus. The pinned loader
+        // is added, as an install adds it, and said; undo takes it out again with the rest.
+        var added = new List<TreeEdit>();
+        string? addedDll = null;
+        string? loaderRisk = null;
+        if (!bringsLoader && !(keepLoaders && state.Loaders.Any(l => l.IsUltimateAsiLoader)))
+        {
+            if (FreeLoaderName(state) is string name)
             {
-                SetMvsInfiniteAside(store, before, mvsi);
-                if (current?.Paks != null)
+                try
                 {
-                    PruneTesting(store, current.Paks);
+                    var (dll, license) = cache.PinnedLoader(progress, cancellationToken);
+                    added.Add(new Content(copy.Prefix + name, dll));
+                    added.Add(new Content(copy.Prefix + Installer.LicenseName, license));
+                    addedDll = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
+                    summary.Add($"Ultimate ASI Loader {pin.Version} is added as {name}: nothing here would load OpenVersus otherwise.");
                 }
-            },
-            mvsi), RiskOf(found.Missing, $"OpenVersus {channel}", InstallAgainFix));
+                catch (DownloadException e)
+                {
+                    summary.Add($"Ultimate ASI Loader could not be downloaded ({e.Message}), so nothing here will load OpenVersus.");
+                    loaderRisk = NoLoaderRisk;
+                }
+            }
+            else
+            {
+                summary.Add("Nothing here will load OpenVersus: version.dll and xinput1_3.dll are both another program's files, so Ultimate ASI Loader cannot take either name.");
+                loaderRisk = NoLoaderRisk;
+            }
+        }
+        bool setWine = addedDll != null && state.WineRegistry is string registry && !WineRegistry.LoadsNative(File.ReadAllText(registry), addedDll);
+        if (setWine)
+        {
+            summary.AddRange(WineLines(state, [addedDll!]));
+        }
+        string? risk = string.Join(" ", new[] { RiskOf(found.Missing, $"OpenVersus {channel}", InstallAgainFix), loaderRisk }.OfType<string>()) is { Length: > 0 } both ? both : null;
+        return new PreparedChange(summary, null, null, report =>
+        {
+            Change(report, state.Game,
+                mvsiAside ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
+                mvsiAside ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", null,
+                // MVS Infinite's paks stay where they are, unless it is set aside: then they leave as its set.
+                (_, live) => [.. found.Paks, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
+                (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p))).Concat(mvsi)
+                    .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned)).Concat(added)),
+                (store, before) =>
+                {
+                    SetMvsInfiniteAside(store, before, mvsi);
+                    if (current?.Paks != null)
+                    {
+                        PruneTesting(store, current.Paks);
+                    }
+                },
+                mvsi);
+            if (setWine)
+            {
+                try
+                {
+                    SetWineNative(state.WineRegistry!, [addedDll!]);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    throw new ChangeException($"OpenVersus is on, but Wine's setting could not be written ({e.Message}); the game's screen offers to set it.", e);
+                }
+            }
+        }, risk);
+    }
+
+    private const string NoLoaderRisk = "Without Ultimate ASI Loader, OpenVersus will not load at all: the game runs as if it were not there. To fix that afterwards, install OpenVersus again.";
+
+    // The name the platform's loader takes, or the other when another program's file holds it; null when both are taken.
+    private string? FreeLoaderName(InstallState state)
+    {
+        bool Taken(string name) => state.Loaders.Any(l => string.Equals(l.FileName, name, StringComparison.OrdinalIgnoreCase) && !l.IsUltimateAsiLoader);
+        string first = host.IsWindows ? "xinput1_3.dll" : "version.dll";
+        string other = first == "version.dll" ? "xinput1_3.dll" : "version.dll";
+        return !Taken(first) ? first : !Taken(other) ? other : null;
     }
 
     // Testing's set holds nothing but current paks once Testing is live with them, apart from what the one undo point
