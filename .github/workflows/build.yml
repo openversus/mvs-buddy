@@ -95,9 +95,20 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang lld llvm cmake ninja-build
+          # Ubuntu's packages install the LLVM tools under versioned names (clang-cl-18) and link only some of them to the
+          # plain ones the cross build calls; link the rest to the newest version present.
+          for tool in clang-cl lld-link llvm-lib llvm-rc llvm-mt; do
+            if ! command -v "$tool" >/dev/null; then
+              versioned=$(ls /usr/bin/"$tool"-[0-9]* 2>/dev/null | sort -V | tail -1)
+              [ -n "$versioned" ] || { echo "::error::no $tool (nor a versioned one) after installing clang, lld and llvm"; ls /usr/bin/*clang* /usr/bin/*lld* /usr/bin/llvm-* 2>/dev/null | head -40; exit 1; }
+              sudo ln -s "$versioned" /usr/local/bin/"$tool"
+              echo "$tool -> $versioned"
+            fi
+          done
           for tool in clang-cl lld-link llvm-lib llvm-rc llvm-mt cmake ninja docker; do
             command -v "$tool" >/dev/null || { echo "::error::$tool is not on PATH"; exit 1; }
           done
+          { echo "### Toolchain"; clang-cl --version | head -1; lld-link --version | head -1; cmake --version | head -1; } | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install xwin
         if: steps.natives.outputs.cache-hit != 'true'
