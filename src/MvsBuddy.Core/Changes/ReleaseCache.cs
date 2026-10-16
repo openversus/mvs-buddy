@@ -136,6 +136,7 @@ internal sealed class ReleaseCache
         string stage = Path.Combine(DataDirectory(), "stage", Guid.NewGuid().ToString("N"));
         try
         {
+            progress?.Report($"Unpacking {zipAsset.Name}...");
             Installer.ExtractPluginFolder(zip, stage);
             string loaderFolder = Path.Combine(stage, LoaderFolder);
             Installer.ExtractLoader(loaderZip, pin, loaderFolder);
@@ -151,6 +152,7 @@ internal sealed class ReleaseCache
                 Loader = new RecordedFile { Name = pin.DllName, Version = pin.Version, Url = pin.ZipUrl.ToString(), Sha256 = pin.DllSha256 },
             };
             File.WriteAllBytes(Path.Combine(stage, InfoFile), JsonSerializer.SerializeToUtf8Bytes(info, CacheJsonContext.Default.CachedReleaseInfo));
+            progress?.Report($"Keeping {release.Tag} in the release cache...");
             string tree = store.TreeOfFolder(stage);
             string commit = store.Commit(BranchOf(release.Channel), tree, release.Tag);
             store.Tag(release.Tag, commit);

@@ -130,7 +130,7 @@ internal sealed class GitStore
     /// last state had is recorded as it is now too, under a root or not, so a path stops being tracked only by being gone.
     /// Returns the commit.
     /// </summary>
-    internal string Snapshot(IEnumerable<string> roots, string message)
+    internal string Snapshot(IEnumerable<string> roots, string message, IProgress<string>? progress = null, string? phase = null)
     {
         var tree = RequireWorkTree();
         using var repo = Repo();
@@ -159,15 +159,17 @@ internal sealed class GitStore
                 : [];
             added.AddRange(files.Where(f => !tracked.Contains(f) && !repo.Ignore.IsPathIgnored(f)));
         }
-        foreach (string path in changed.Concat(added).Distinct(StringComparer.Ordinal))
+        var paths = changed.Concat(added).Distinct(StringComparer.Ordinal).ToList();
+        for (int i = 0; i < paths.Count; i++)
         {
-            if (File.Exists(Path.Combine(tree, path)))
+            Tell(progress, phase, i, paths.Count);
+            if (File.Exists(Path.Combine(tree, paths[i])))
             {
-                index.Add(path);
+                index.Add(paths[i]);
             }
             else
             {
-                index.Remove(path);
+                index.Remove(paths[i]);
             }
         }
         index.Write();
@@ -205,16 +207,18 @@ internal sealed class GitStore
     /// as libgit2 stages them (modes included) through an index of its own: the store's index, and so what its states
     /// track, is not touched. Ignored paths are left out. Returns the tree.
     /// </summary>
-    internal string TreeOfFiles(IEnumerable<string> paths)
+    internal string TreeOfFiles(IEnumerable<string> paths, IProgress<string>? progress = null, string? phase = null)
     {
         string tree = RequireWorkTree();
         string index = Path.Combine(gitDir, $"index-{Guid.NewGuid():N}");
         try
         {
             using var repo = new Repository(gitDir, new RepositoryOptions { WorkingDirectoryPath = tree, IndexPath = index });
-            foreach (string path in paths.Where(p => !repo.Ignore.IsPathIgnored(p)))
+            var kept = paths.Where(p => !repo.Ignore.IsPathIgnored(p)).ToList();
+            for (int i = 0; i < kept.Count; i++)
             {
-                repo.Index.Add(path);
+                Tell(progress, phase, i, kept.Count);
+                repo.Index.Add(kept[i]);
             }
             return repo.ObjectDatabase.CreateTree(repo.Index).Sha;
         }
@@ -443,7 +447,7 @@ internal sealed class GitStore
     /// back as HEAD had it and the branch stays; the exception says what failed. Returns the new commit.
     /// </summary>
     /// <exception cref="ChangeException">The switch failed, and was put back (or could not be, which it says).</exception>
-    internal string Switch(string tree, string message)
+    internal string Switch(string tree, string message, IProgress<string>? progress = null, string? phase = null)
     {
         var root = RequireWorkTree();
         using var repo = Repo();
@@ -452,12 +456,12 @@ internal sealed class GitStore
         try
         {
             // HEAD still on the snapshot: it is the baseline that tells libgit2 which files are ours to remove.
-            repo.Checkout(target.Tree, null, new CheckoutOptions());
+            repo.Checkout(target.Tree, null, new CheckoutOptions { OnCheckoutProgress = Telling(progress, phase) });
         }
         catch (LibGit2SharpException e)
         {
             log.LogWarning(e, "Switching {Tree} to {Commit} failed; putting it back", root, Short(target.Sha));
-            string? stuck = PutBack(repo, root, head);
+            string? stuck = PutBack(repo, root, head, progress);
             throw new ChangeException(stuck == null ? $"{e.Message} Everything was put back as it was." : $"{e.Message} It could not all be put back: {stuck}", e);
         }
         repo.Refs.Add(repo.Head.CanonicalName, target.Id, allowOverwrite: true);
@@ -469,11 +473,26 @@ internal sealed class GitStore
     // HEAD's tree also removes those (and the folders they emptied). Deleting "the paths only the target has" by hand
     // would be wrong: when a file of the person's stands where the target wants one, libgit2 refuses before writing
     // anything, and that file is theirs.
-    private string? PutBack(Repository repo, string tree, Commit head)
+    internal const string PuttingBack = "Putting the game's files back...";
+
+    // A phase's progress through its files, every hundredth of them or so and at the last: "<phase> (120 of 350 files)".
+    private static void Tell(IProgress<string>? progress, string? phase, int done, int total)
+    {
+        if (progress != null && phase != null && total > 0 && (done % Math.Max(1, total / 100) == 0 || done == total - 1))
+        {
+            progress.Report($"{phase} ({done + 1} of {total} files)");
+        }
+    }
+
+    // libgit2's checkout progress as the same kind of line; null when nobody is listening.
+    private static LibGit2Sharp.Handlers.CheckoutProgressHandler? Telling(IProgress<string>? progress, string? phase) =>
+        progress == null || phase == null ? null : (_, done, total) => Tell(progress, phase, Math.Max(0, done - 1), total);
+
+    private string? PutBack(Repository repo, string tree, Commit head, IProgress<string>? progress)
     {
         try
         {
-            repo.CheckoutPaths(head.Sha, ["*"], new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+            repo.CheckoutPaths(head.Sha, ["*"], new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force, OnCheckoutProgress = Telling(progress, PuttingBack) });
             return null;
         }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is LibGit2SharpException)

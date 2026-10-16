@@ -39,6 +39,43 @@ internal static unsafe partial class Screenshot
         };
     }
 
+    /// <summary>
+    /// Saves the window on the first frame whose content shows <paramref name="text"/>, then closes it: for a screen that
+    /// is only up while work runs (the lines of an install), which <see cref="When"/> waits out.
+    /// </summary>
+    public static Action WhenShown(RmlWindow window, UiThread ui, string path, string text)
+    {
+        bool saving = false;
+        return () =>
+        {
+            ui.KeepAwake = true;
+            if (saving)
+            {
+                return;
+            }
+            var content = window.Context.GetDocument(0).GetElementById("content");
+            if (content.IsNull || !content.GetInnerRML().Contains(text, StringComparison.Ordinal))
+            {
+                return;
+            }
+            saving = true;
+            if (!OperatingSystem.IsLinux() || window.Renderer != RmlRenderer.OpenGL)
+            {
+                Console.Error.WriteLine("--screenshot needs Linux and the OpenGL renderer");
+                window.RequestExit();
+                return;
+            }
+            Console.WriteLine($"screenshot: \"{text}\" is on the screen");
+            var size = window.Context.GetDimensions();
+            window.AfterRender += () =>
+            {
+                Save(path, size.X, size.Y);
+                window.RequestExit();
+            };
+            window.PowerSave = false;
+        };
+    }
+
     private static void Save(string path, int width, int height)
     {
         const uint GL_RGB = 0x1907, GL_UNSIGNED_BYTE = 0x1401, GL_PACK_ALIGNMENT = 0x0D05;

@@ -110,6 +110,12 @@ public sealed class GameStates
     private const string CoversLine = "covers";
     private const string FirstSightLoader = "Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.";
 
+    // The phases of a change, as its progress lines name them; a phase that counts its files adds "(n of m files)".
+    private const string FirstLookPhase = "Keeping how this copy is before MVS Buddy first changes it...";
+    private const string SavingPhase = "Saving what is there now, for undo...";
+    private const string ChangingPhase = "Changing the game's files...";
+    private const string PaksPhase = "Moving the paks...";
+
     private readonly HostSystem host;
     private readonly ReleaseCatalog catalog;
     private readonly ReleaseCache cache;
@@ -1235,12 +1241,12 @@ public sealed class GameStates
         // The first change of this copy: no state yet. Kept even if this change is then refused, since nothing has moved.
         if (store.Tip(CurrentBranch) == null && store.Tip(InitialBranch) == null)
         {
-            progress?.Report("Keeping how this copy is before MVS Buddy first changes it...");
-            MakeInitial(store, copy, now, live);
+            progress?.Report(FirstLookPhase);
+            MakeInitial(store, copy, now, live, progress);
             log.LogInformation("{Title}: first look kept in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
         }
-        progress?.Report("Saving what is there now, for undo...");
-        string before = store.Snapshot(Roots(now, copy).Concat(extraRoots ?? []), Message(beforeWhat, live));
+        progress?.Report(SavingPhase);
+        string before = store.Snapshot(Roots(now, copy).Concat(extraRoots ?? []), Message(beforeWhat, live), progress, SavingPhase);
         string beforeTree = store.TreeOf(before);
         if (now.Channel is { } channel)
         {
@@ -1266,20 +1272,21 @@ public sealed class GameStates
         }
         pakPlan.Check();
         log.LogInformation("{Title}: checked in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
-        progress?.Report("Changing the game's files...");
+        progress?.Report(ChangingPhase);
 
-        store.Switch(targetTree, title);
+        store.Switch(targetTree, title, progress, ChangingPhase);
         log.LogInformation("{Title}: switched in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
-        progress?.Report("Moving the paks...");
+        progress?.Report(PaksPhase);
         try
         {
-            pakPlan.Apply();
+            pakPlan.Apply(progress, PaksPhase);
         }
         catch (ChangeException e)
         {
+            progress?.Report(GitStore.PuttingBack);
             try
             {
-                store.Switch(beforeTree, "Put back: " + title);
+                store.Switch(beforeTree, "Put back: " + title, progress, GitStore.PuttingBack);
             }
             catch (ChangeException back)
             {
@@ -1311,7 +1318,7 @@ public sealed class GameStates
     // recognises (the mod, the loaders and the license, other plugins), and the message says so. Made through an index of its
     // own, so the states do not start tracking these files. The paks of the mod and MVS Infinite are lines by checksum, never
     // in git; the loaders are lines too.
-    private void MakeInitial(GitStore store, CopyLayout copy, InstallState now, IReadOnlyList<LivePak> live)
+    private void MakeInitial(GitStore store, CopyLayout copy, InstallState now, IReadOnlyList<LivePak> live, IProgress<string>? progress)
     {
         var report = stock.Read(now);
         var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -1325,7 +1332,7 @@ public sealed class GameStates
             + string.Concat(now.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => $"{LoaderLine}\t{l.FileName}\t{l.Sha256}\n"));
         string message = Message("How this copy was the first time MVS Buddy changed it", live);
         int split = message.IndexOf("\n\n", StringComparison.Ordinal) + 2;
-        store.Commit(InitialBranch, store.TreeOfFiles(paths), message.Substring(0, split) + lines + message.Substring(split));
+        store.Commit(InitialBranch, store.TreeOfFiles(paths, progress, FirstLookPhase), message.Substring(0, split) + lines + message.Substring(split));
     }
 
     // Whether the copy keeps its loaders whatever else goes: one was there the first time MVS Buddy saw it. That

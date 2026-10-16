@@ -132,7 +132,7 @@ internal sealed class PakStore
 
     private static bool Checked(string path, string name, string sha256, IProgress<string>? progress)
     {
-        progress?.Report($"Checking {name}");
+        progress?.Report($"Checking the paks already here... ({name})");
         return Downloads.Sha256Of(path) == sha256;
     }
 }

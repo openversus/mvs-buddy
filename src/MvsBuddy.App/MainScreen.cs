@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using MvsBuddy.Catalog;
@@ -608,27 +609,26 @@ internal sealed class MainScreen
     {
         message = null;
         var stop = CancellationTokenSource.CreateLinkedTokenSource(ui.Closing);
-        string line = "Starting...";
+        var work = new Work();
         void Render()
         {
             actions.Clear();
-            Show($"<h2>Getting {Html.Text(release.Tag)} ready</h2><p class=\"working\">{Html.Text(line)}</p>"
-                + "<p class=\"muted\">Nothing in the game changes until you say so.</p>"
+            Show($"<h2>Getting {Html.Text(release.Tag)} ready</h2>{WorkingRml(work, "Starting...", "Nothing in the game changes until you say so.")}"
                 + $"<div class=\"actions\">{Button("Cancel", stop.Cancel)}</div>");
         }
-        Render();
-        var progress = new Lines(ui, text =>
-        {
-            line = text;
-            if (!stop.IsCancellationRequested)
-            {
-                Render();
-            }
-        });
+        var progress = Watch(work, Render);
         string tag = release.Tag;
         ui.Run(() => buddy.States.PrepareInstallAsync(s, release, null, progress, stop.Token),
-            prepared => Confirm($"Install {tag}?", prepared, $"OpenVersus {tag} is installed.", "Install"),
-            e => NotReady(e, "The install was cancelled; nothing was changed."));
+            prepared =>
+            {
+                work.On = false;
+                Confirm($"Install {tag}?", prepared, $"OpenVersus {tag} is installed.", "Install");
+            },
+            e =>
+            {
+                work.On = false;
+                NotReady(e, "The install was cancelled; nothing was changed.");
+            });
     }
 
     // A change that could not be got ready: said on the game's screen, unless it is something unexpected.
@@ -990,31 +990,77 @@ internal sealed class MainScreen
     private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done)
     {
         message = null;
-        string line = "Getting it ready...";
-        bool waiting = true;
+        var work = new Work();
         void Render()
         {
             actions.Clear();
-            Show($"<h2>{Html.Text(title)}</h2><p class=\"working\">{Html.Text(line)}</p><p class=\"muted\">Nothing in the game changes until you say so.</p>");
+            Show($"<h2>{Html.Text(title)}</h2>{WorkingRml(work, "Getting it ready...", "Nothing in the game changes until you say so.")}");
         }
-        Render();
-        var progress = new Lines(ui, text =>
-        {
-            line = text;
-            if (waiting)
-            {
-                Render();
-            }
-        });
+        var progress = Watch(work, Render);
         ui.Run(() => Task.FromResult(prepare(progress)), change =>
         {
-            waiting = false;
+            work.On = false;
             Confirm(title, change, done);
         }, e =>
         {
-            waiting = false;
+            work.On = false;
             NotReady(e);
         });
+    }
+
+    /// <summary>What running work has reported so far, and for how long it has run; <see cref="On"/> false once its screen is gone.</summary>
+    private sealed class Work
+    {
+        public ProgressLines Lines { get; } = new();
+
+        public Stopwatch Clock { get; } = Stopwatch.StartNew();
+
+        public bool On { get; set; } = true;
+    }
+
+    // Shows the work now and whenever it reports or a second passes, while it is on; the reporter to hand to the work.
+    private Lines Watch(Work work, Action render)
+    {
+        render();
+        ui.Tick(TimeSpan.FromSeconds(1), () =>
+        {
+            if (work.On)
+            {
+                render();
+            }
+            return work.On;
+        });
+        return new Lines(ui, lines =>
+        {
+            if (!work.On)
+            {
+                return;
+            }
+            foreach (string line in lines)
+            {
+                work.Lines.Add(line);
+            }
+            render();
+        });
+    }
+
+    // The phases so far, the current one last and brighter; after a few seconds, how long it has been at it, so a stretch
+    // nothing reports on (libgit2 looking over thousands of files) still shows the window is alive.
+    private static string WorkingRml(Work work, string untilFirst, string note)
+    {
+        var rml = new StringBuilder("<div class=\"lines\">");
+        var lines = work.Lines.Lines;
+        if (lines.Count == 0)
+        {
+            rml.Append($"<p class=\"working\">{Html.Text(untilFirst)}</p>");
+        }
+        for (int i = 0; i < lines.Count; i++)
+        {
+            rml.Append($"<p class=\"{(i == lines.Count - 1 ? "working" : "muted")}\">{Html.Text(lines[i])}</p>");
+        }
+        int seconds = (int)work.Clock.Elapsed.TotalSeconds;
+        rml.Append($"</div><p class=\"muted note\">{Html.Text(note)}{(seconds >= 3 ? $" {seconds} s so far." : "")}</p>");
+        return rml.ToString();
     }
 
     // What a change will do, as the change itself says, and the go-ahead; a change that cannot be made says why instead.
@@ -1044,35 +1090,26 @@ internal sealed class MainScreen
 
     private void Apply(PreparedChange change, string done)
     {
-        string line = "Working...";
-        bool working = true;
+        var work = new Work();
         void Render()
         {
             actions.Clear();
-            Show($"<p class=\"working\">{Html.Text(line)}</p><p class=\"muted\">Leave the window open until this is done.</p>");
+            Show(WorkingRml(work, "Working...", "Leave the window open until this is done."));
         }
-        Render();
-        var progress = new Lines(ui, text =>
-        {
-            line = text;
-            if (working)
-            {
-                Render();
-            }
-        });
+        var progress = Watch(work, Render);
         ui.Run(() =>
         {
             change.Apply(progress);
             return Task.FromResult(true);
         }, _ =>
         {
-            working = false;
+            work.On = false;
             message = (done, false);
             offerMenuEntry = OperatingSystem.IsLinux() && buddy.Preferences.MenuEntry == null;
             Reload();
         }, e =>
         {
-            working = false;
+            work.On = false;
             if (e is ChangeException { DeniedFolders.Count: > 0 } denied && buddy.Permissions.CanAsk)
             {
                 ShowDenied(denied, change, done);
@@ -1140,10 +1177,40 @@ internal sealed class MainScreen
     private static string GameFolder(GameInstall copy) =>
         copy.Verified ? Path.GetFullPath(Path.Combine(copy.Win64Directory, "..", "..", "..")) : copy.Win64Directory;
 
-    /// <summary>Progress lines from running work, each shown on the UI thread.</summary>
-    private sealed class Lines(UiThread ui, Action<string> show) : IProgress<string>
+    /// <summary>
+    /// Progress lines from running work, shown on the UI thread: the lines since the last frame together in one call, so
+    /// a step that reports hundreds of times a second (libgit2 per file) costs one render a frame, and no line is dropped.
+    /// </summary>
+    private sealed class Lines(UiThread ui, Action<IReadOnlyList<string>> show) : IProgress<string>
     {
-        public void Report(string value) => ui.Post(() => show(value));
+        private readonly List<string> pending = [];
+        private bool posted;
+
+        public void Report(string value)
+        {
+            lock (pending)
+            {
+                pending.Add(value);
+                if (posted)
+                {
+                    return;
+                }
+                posted = true;
+            }
+            ui.Post(Flush);
+        }
+
+        private void Flush()
+        {
+            List<string> batch;
+            lock (pending)
+            {
+                batch = [.. pending];
+                pending.Clear();
+                posted = false;
+            }
+            show(batch);
+        }
     }
 
     /// <summary>Progress from a search, shown at most every few hundred folders and whenever it finds a copy.</summary>

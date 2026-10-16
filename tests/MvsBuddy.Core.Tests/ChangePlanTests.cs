@@ -56,9 +56,13 @@ public sealed class ChangePlanTests : IDisposable
             // Last: its folder cannot be written, so it cannot be moved out of it.
             plan.Move(stuck, tree.Path("data", "paks", "testing", "d.pak"));
 
-            var e = Assert.Throws<ChangeException>(plan.Apply);
+            var told = new Told();
+            var e = Assert.Throws<ChangeException>(() => plan.Apply(told, "Moving the paks..."));
 
             Assert.Contains("put back", e.Message);
+            // Each step is named before it runs, and the undo says what it is doing.
+            Assert.Equal(["Moving the paks... (1 of 4: a.pak)", "Moving the paks... (2 of 4: b.pak)", "Moving the paks... (3 of 4: c.pak)",
+                "Moving the paks... (4 of 4: d.pak)", "Moving the paks... (putting back what was moved so far)"], told.Lines);
             Assert.All(paks, p => Assert.Equal(p.Value, File.ReadAllText(p.Key)));
             Assert.Equal("d", File.ReadAllText(stuck));
             Assert.Empty(Directory.EnumerateFiles(tree.Path("data", "paks", "testing")));

@@ -55,6 +55,9 @@ p { margin: 0 0 8dp 0; line-height: 22dp; }
 .muted { color: #7d8596; font-size: 14dp; }
 .path { color: #9aa3b5; font-size: 14dp; word-break: break-all; }
 .working { color: #aeb5c4; }
+/* A working screen's phases: close together, the note under them set apart. */
+.lines p { margin: 0 0 2dp 0; }
+.note { margin-top: 12dp; }
 
 .card {
     padding: 12dp 16dp;

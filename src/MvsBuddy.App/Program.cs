@@ -10,12 +10,14 @@ using Serilog.Extensions.Logging;
 // MVS Buddy: finds MultiVersus and installs, turns off and undoes OpenVersus there, for people who should never need to
 // open a folder. Logs go to MVS Buddy's own folder (logs/), one file a day. For looking at it without a person:
 // --game=<Win64 folder> uses that copy instead of looking for one, --click="Label;Label" clicks those buttons in turn, and
-// --screenshot=<file.ppm> then saves the window and exits (OpenGL; Linux).
+// --screenshot=<file.ppm> then saves the window and exits (OpenGL; Linux); with --screenshot-when=<text> it saves instead
+// on the first frame the content shows that text, for a screen that is only up while work runs.
 
 string version = typeof(MainScreen).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?";
 string? screenshot = Option("--screenshot");
 string? gameFolder = Option("--game");
 string? clicks = Option("--click");
+string? screenshotWhen = Option("--screenshot-when");
 
 // Configured in code: a trimmed single-file executable cannot resolve sinks by name from a settings file.
 Log.Logger = new LoggerConfiguration()
@@ -66,10 +68,21 @@ try
     var ui = new UiThread(window);
     var screen = new MainScreen(window, ui, buddy, version.Split('+')[0], loggerFactory.CreateLogger<MainScreen>());
     screen.Start(gameFolder == null ? null : buddy.Games.Choose(gameFolder));
-    Action? afterFrame = screenshot == null ? null : Screenshot.When(window, ui, screenshot);
+    Action? afterFrame = screenshot == null || screenshotWhen != null ? null : Screenshot.When(window, ui, screenshot);
     if (clicks != null)
     {
         afterFrame = new Autopilot(window, ui, clicks.Split(';', StringSplitOptions.RemoveEmptyEntries), afterFrame).AfterFrame;
+    }
+    if (screenshot != null && screenshotWhen != null)
+    {
+        // Watched every frame beside the clicks, since the screen it waits for is up only while the clicked work runs.
+        var clicking = afterFrame;
+        var shown = Screenshot.WhenShown(window, ui, screenshot, screenshotWhen);
+        afterFrame = () =>
+        {
+            clicking?.Invoke();
+            shown();
+        };
     }
     ui.Loop(afterFrame);
     return 0;

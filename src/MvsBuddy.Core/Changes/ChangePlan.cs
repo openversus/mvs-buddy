@@ -4,7 +4,7 @@ namespace MvsBuddy.Changes;
 
 /// <summary>
 /// Changes to files, made all together or not at all: the paks a change moves, and files written outside a state. Nothing
-/// happens until <see cref="Apply"/>.
+/// happens until <see cref="Apply()"/>.
 /// </summary>
 public sealed class ChangePlan
 {
@@ -40,7 +40,14 @@ public sealed class ChangePlan
     /// <see cref="ChangeException.DeniedFolders"/>). If a step fails, every earlier one is undone.
     /// </summary>
     /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
-    public void Apply()
+    public void Apply() => Apply(null, "Changing files...");
+
+    /// <summary>
+    /// Makes the changes as <see cref="Apply()"/> does, telling <paramref name="progress"/> before each step which it is,
+    /// as <paramref name="phase"/> followed by the step's place and the file's name: "Moving the paks... (3 of 12: x.pak)".
+    /// </summary>
+    /// <exception cref="ChangeException">Refused, or failed and put back; the message says which.</exception>
+    public void Apply(IProgress<string>? progress, string phase)
     {
         Check();
         var done = new Stack<Step>();
@@ -49,11 +56,13 @@ public sealed class ChangePlan
             try
             {
                 log.LogInformation("{Step}", step.Description);
+                progress?.Report($"{phase} ({done.Count + 1} of {steps.Count}: {step.Name})");
                 step.Do();
                 done.Push(step);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
+                progress?.Report($"{phase} (putting back what was moved so far)");
                 var stuck = new List<string>();
                 while (done.Count > 0)
                 {
@@ -97,7 +106,7 @@ public sealed class ChangePlan
     }
 
     /// <summary>
-    /// What <see cref="Apply"/> checks before it changes anything: the game is not running, no condition of the plan fails,
+    /// What <see cref="Apply()"/> checks before it changes anything: the game is not running, no condition of the plan fails,
     /// and this account may change every folder. For a change made of this plan and more, checked before the rest.
     /// </summary>
     /// <exception cref="ChangeException">Refused; the message says why.</exception>
@@ -123,14 +132,14 @@ public sealed class ChangePlan
     {
         folders.Add(Path.GetDirectoryName(from)!);
         folders.Add(Path.GetDirectoryName(to)!);
-        steps.Add(new Step($"Move {from} to {to}", () => FileMoves.Move(from, to, host.IsWindows), () => FileMoves.Move(to, from, host.IsWindows)));
+        steps.Add(new Step($"Move {from} to {to}", Path.GetFileName(from), () => FileMoves.Move(from, to, host.IsWindows), () => FileMoves.Move(to, from, host.IsWindows)));
     }
 
     /// <summary>Writes a file that is not there yet; undone by deleting it.</summary>
     internal void Write(string path, byte[] contents)
     {
         folders.Add(Path.GetDirectoryName(path)!);
-        steps.Add(new Step($"Write {path}", () =>
+        steps.Add(new Step($"Write {path}", Path.GetFileName(path), () =>
         {
             if (File.Exists(path))
             {
@@ -146,7 +155,7 @@ public sealed class ChangePlan
     {
         byte[]? kept = null;
         folders.Add(Path.GetDirectoryName(path)!);
-        steps.Add(new Step($"Delete {path}", () =>
+        steps.Add(new Step($"Delete {path}", Path.GetFileName(path), () =>
         {
             kept = File.ReadAllBytes(path);
             File.Delete(path);
@@ -196,9 +205,12 @@ public sealed class ChangePlan
         return new ChangeException(reason);
     }
 
-    private sealed class Step(string description, Action doIt, Action undo)
+    private sealed class Step(string description, string name, Action doIt, Action undo)
     {
         public string Description { get; } = description;
+
+        /// <summary>The file's name, for a progress line.</summary>
+        public string Name { get; } = name;
 
         public void Do() => doIt();
 

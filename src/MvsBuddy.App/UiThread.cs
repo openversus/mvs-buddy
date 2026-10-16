@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using RmlUi.Desktop;
 
 namespace MvsBuddy.App;
@@ -12,6 +13,7 @@ namespace MvsBuddy.App;
 internal sealed class UiThread(RmlWindow window)
 {
     private readonly ConcurrentQueue<Action> queue = new();
+    private readonly List<(TimeSpan Period, Func<bool> Keep, Stopwatch Since)> ticks = [];
     private readonly CancellationTokenSource closing = new();
     private int working;
 
@@ -53,6 +55,9 @@ internal sealed class UiThread(RmlWindow window)
     /// <summary>Runs <paramref name="action"/> on this thread at the next frame (progress from running work).</summary>
     public void Post(Action action) => queue.Enqueue(action);
 
+    /// <summary>Runs <paramref name="keep"/> on this thread every <paramref name="period"/> (an elapsed time on a working screen) until it returns false.</summary>
+    public void Tick(TimeSpan period, Func<bool> keep) => ticks.Add((period, keep, Stopwatch.StartNew()));
+
     /// <summary>
     /// Runs frames until the window closes, running what was handed back between them; <paramref name="afterFrame"/>
     /// runs after each. When the window closes, work that can stop is told to (<see cref="Closing"/>), and the rest (an
@@ -73,8 +78,31 @@ internal sealed class UiThread(RmlWindow window)
                     OnError(e);
                 }
             }
+            for (int i = ticks.Count - 1; i >= 0; i--)
+            {
+                var tick = ticks[i];
+                if (tick.Since.Elapsed < tick.Period)
+                {
+                    continue;
+                }
+                tick.Since.Restart();
+                bool keep;
+                try
+                {
+                    keep = tick.Keep();
+                }
+                catch (Exception e) when (OnError != null)
+                {
+                    OnError(e);
+                    keep = false;
+                }
+                if (!keep)
+                {
+                    ticks.RemoveAt(i);
+                }
+            }
             afterFrame?.Invoke();
-            bool idle = !Busy && queue.IsEmpty && !KeepAwake;
+            bool idle = !Busy && queue.IsEmpty && !KeepAwake && ticks.Count == 0;
             window.PowerSave = idle;
             if (!idle)
             {

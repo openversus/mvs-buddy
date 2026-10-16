@@ -144,6 +144,17 @@ public sealed class GameStatesTests : IDisposable
 
     private GitStore States(Buddy buddy) => buddy.States.Open(buddy.States.Layout(Game()));
 
+    // The lines as a screen would keep them: one per phase.
+    private static List<string> Folded(Told told)
+    {
+        var lines = new ProgressLines();
+        foreach (string line in told.Lines)
+        {
+            lines.Add(line);
+        }
+        return lines.Lines.ToList();
+    }
+
     private static string Read(string path) => File.ReadAllText(path);
 
     [Fact]
@@ -154,10 +165,30 @@ public sealed class GameStatesTests : IDisposable
         var before = Everything();
         var release = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
 
-        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), release);
+        var preparing = new Told();
+        var install = await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), release, progress: preparing);
         Assert.Null(install.Refused);
         Assert.Contains("The OpenVersus here is Testing (a guess from its server address", string.Join("\n", install.Summary));
-        install.Apply();
+        var applying = new Told();
+        install.Apply(applying);
+
+        // What a person watching sees: each phase one line, the counting ones ending on their total.
+        Assert.Equal(["Downloading OpenVersus_release.zip", $"Downloading Ultimate ASI Loader {Pin().Version}", "Unpacking OpenVersus_release.zip...",
+            "Keeping 2026.10.13.1-testing in the release cache...", "Checking the paks already here...", "Downloading OVS_P.pak"], Folded(preparing).Select(ProgressLines.KeyOf));
+        var applied = Folded(applying);
+        Assert.Equal(["Reading the game's folder...", "Keeping how this copy is before MVS Buddy first changes it...", "Saving what is there now, for undo...",
+            "Checking that nothing is in the way...", "Changing the game's files...", "Moving the paks...", "Tidying up MVS Buddy's folder...", "Tidying the release cache..."],
+            applied.Select(ProgressLines.KeyOf));
+        // The three phases that count their files all do (libgit2's checkout callback included), and end on their total.
+        var counted = applied.Where(l => l.Contains(" files)", StringComparison.Ordinal)).Select(ProgressLines.KeyOf).ToList();
+        Assert.Equal(["Keeping how this copy is before MVS Buddy first changes it...", "Saving what is there now, for undo...", "Changing the game's files..."], counted);
+        Assert.All(applied.Where(l => l.Contains(" files)", StringComparison.Ordinal)), l =>
+        {
+            var counts = l.Substring(l.LastIndexOf('(') + 1).TrimEnd(')').Replace(" files", "").Split(" of ");
+            Assert.Equal(counts[0], counts[1]);
+            Assert.NotEqual("0", counts[0]);
+        });
+        Assert.Matches(@"^Moving the paks\.\.\. \((\d+) of \1: ", applied.Single(l => l.StartsWith("Moving the paks", StringComparison.Ordinal)));
 
         var after = buddy.Installs.Read(Game());
         Assert.Equal([Path.Combine(Home, "OpenVersus_2026.10.13.1.asi")], after.Mod.Plugins);
@@ -980,7 +1011,7 @@ public sealed class GameStatesTests : IDisposable
         // Steam running: refused before, and again at the moment of the change.
         steamRuns = true;
         var refused = buddy.States.PrepareLaunchOptions(state, account, on: true);
-        Assert.StartsWith("Steam is running", refused.Refused);
+        Assert.StartsWith("Steam is currently running", refused.Refused);
         Assert.Equal(LocalConfig, Read(LocalConfigFile));
         steamRuns = false;
         var on = buddy.States.PrepareLaunchOptions(state, account, on: true);
