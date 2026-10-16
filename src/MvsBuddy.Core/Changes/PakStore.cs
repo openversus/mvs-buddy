@@ -68,6 +68,43 @@ internal sealed class PakStore
         }
     }
 
+    /// <summary>
+    /// Deletes from <paramref name="set"/> every pak that is not one of <paramref name="keep"/> (the same name and checksum),
+    /// and names only what is left in its manifest. For testing, whose only valid paks are the current ones: one pulled
+    /// from the release, or folded into another, must not come back from here.
+    /// </summary>
+    internal void Prune(string set, IEnumerable<PakEntry> keep)
+    {
+        string folder = Folder(set);
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+        // The same name may be kept with more than one checksum (the current pak and the one the undo point had).
+        var kept = new HashSet<(string Name, string Sha256)>(keep.Select(p => (p.Name.ToLowerInvariant(), p.Sha256.ToLowerInvariant())));
+        var entries = Read(set).Where(e => kept.Contains((e.Name.ToLowerInvariant(), e.Sha256.ToLowerInvariant()))).ToList();
+        foreach (string file in Directory.EnumerateFiles(folder))
+        {
+            string name = Path.GetFileName(file);
+            if (name == ManifestFile || kept.Contains((name.ToLowerInvariant(), Downloads.Sha256Of(file).ToLowerInvariant())))
+            {
+                continue;
+            }
+            log.LogInformation("Deleting {File} from the {Set} set: not among the current paks", file, set);
+            File.Delete(file);
+        }
+        string manifest = Path.Combine(folder, ManifestFile);
+        if (entries.Count == 0)
+        {
+            if (File.Exists(manifest))
+            {
+                File.Delete(manifest);
+            }
+            return;
+        }
+        File.WriteAllBytes(manifest, Manifest(entries));
+    }
+
     /// <summary>A manifest naming <paramref name="paks"/>.</summary>
     internal static byte[] Manifest(IEnumerable<PakEntry> paks) =>
         JsonSerializer.SerializeToUtf8Bytes(paks.ToList(), PakJsonContext.Default.ListPakEntry);
@@ -128,6 +165,19 @@ internal sealed class PakStore
         }
         missing = notFound;
         return found;
+    }
+
+    /// <summary>
+    /// <paramref name="pak"/> downloaded again from its <see cref="PakEntry.Url"/> and checked, where it landed. Waits for the
+    /// download: the changes that need it are got ready off the window's thread already.
+    /// </summary>
+    /// <exception cref="DownloadException">It could not be fetched or did not match.</exception>
+    internal StagedPak Fetch(PakEntry pak, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        var asset = new ReleaseAsset(pak.Name, pak.Size, new Uri(pak.Url ?? throw new ArgumentException("The pak has no address.", nameof(pak))), pak.Sha256);
+        progress?.Report($"Downloading {pak.Name}");
+        string path = downloads.FetchAsync(asset.DownloadUrl, pak.Name, pak.Sha256, Installer.Percent.Of(progress, asset), cancellationToken).GetAwaiter().GetResult();
+        return new StagedPak(pak.Name, pak.Size, pak.Sha256, pak.Url, path, true) { Home = pak.Home };
     }
 
     private static bool Checked(string path, string name, string sha256, IProgress<string>? progress)

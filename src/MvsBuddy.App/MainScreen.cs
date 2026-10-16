@@ -405,9 +405,9 @@ internal sealed class MainScreen
                 // With MVS Infinite here, turning OpenVersus on is a switch: MVS Infinite is set aside in the same change.
                 rml.Append(MvsInfiniteLive(s)
                     ? Button($"Switch to OpenVersus {channel}", () => WithPakAnswers(s, answered => Prepare($"Switch to OpenVersus {channel}?",
-                        progress => buddy.States.PrepareSwitchToOpenVersus(answered, channel, progress), $"Switched to OpenVersus {channel}.")), "primary")
+                        progress => buddy.States.PrepareSwitchToOpenVersus(answered, channel, progress, ui.Closing), $"Switched to OpenVersus {channel}.")), "primary")
                     : Button($"Turn OpenVersus {channel} on", () => Prepare($"Turn OpenVersus {channel} on?",
-                        progress => buddy.States.PrepareTurnOn(s, channel, progress), $"OpenVersus {channel} is on."), "primary"));
+                        progress => buddy.States.PrepareTurnOn(s, channel, progress, ui.Closing), $"OpenVersus {channel} is on."), "primary"));
             }
         }
         if (s.WineOverridesMissing.Count > 0)
@@ -417,7 +417,8 @@ internal sealed class MainScreen
         }
         if (canUndo)
         {
-            rml.Append(Button("Undo the last change", () => Prepare("Undo the last change?", progress => buddy.States.PrepareUndo(s, progress), "The last change was undone.")));
+            rml.Append(Button("Undo the last change", () => Prepare("Undo the last change?", progress => buddy.States.PrepareUndo(s, progress, ui.Closing), "The last change was undone.",
+                instead: ("Delete this undo point instead", DropUndo))));
         }
         bool openVersusHere = s.Mod.Layout != ModLayout.None || KeptChannels().Any() || s.Paks.Count + s.PaksInGame.Count > 0;
         if (openVersusHere || firstLook != null)
@@ -670,7 +671,7 @@ internal sealed class MainScreen
         rml.Append("<div class=\"card\"><p class=\"strong\">Roll back to how it was the first time</p>")
             .Append($"<p class=\"muted\">This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before MVS Buddy first changed it: what it had then comes back, "
                 + "the mod's files and the loader that were not here then go, and other files added since stay. Undo can undo it.</p>")
-            .Append(Button("Roll back", () => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(s, progress),
+            .Append(Button("Roll back", () => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(s, progress, ui.Closing),
                 "This copy is back to how it was the first time."), openVersusHere ? "" : "primary")).Append("</div>");
         rml.Append($"<div class=\"actions\">{Button("Cancel", ShowGame)}</div>");
         Show(rml.ToString());
@@ -924,10 +925,10 @@ internal sealed class MainScreen
             // With OpenVersus off, its "turn on" is above.
             if (s.Mod.Layout != ModLayout.None)
             {
-                rml.Append(Button("Turn on", () => Prepare($"Turn {name} on?", progress => buddy.States.PrepareTurnOn(s, channel, progress), $"{name} is on."), "small"));
+                rml.Append(Button("Turn on", () => Prepare($"Turn {name} on?", progress => buddy.States.PrepareTurnOn(s, channel, progress, ui.Closing), $"{name} is on."), "small"));
             }
             rml.Append(Button("Delete for good", () => ConfirmDiscard(name,
-                $"Its saved state and its paks are deleted from MVS Buddy's folder. Installing {channel} again downloads its paks, and it starts with a new saved state.",
+                $"Its saved state is deleted from MVS Buddy's folder; its paks stay kept, so installing {channel} again does not download them. It starts with a new saved state.",
                 $"{name} was deleted.", () => buddy.States.Discard(s.Game, SetAsideKind.OpenVersus, channel)), "small")).Append("</div>");
         }
         var sets = kept.Where(k => k.Kind != SetAsideKind.OpenVersus).ToList();
@@ -946,9 +947,9 @@ internal sealed class MainScreen
             // With OpenVersus on, MVS Infinite comes back as a switch: OpenVersus is set aside in the same change.
             rml.Append(mvsi && s.Mod.Layout != ModLayout.None && !MvsInfiniteLive(s)
                 ? Button("Switch to MVS Infinite", () => Prepare("Switch to MVS Infinite?",
-                    progress => buddy.States.PrepareSwitchToMvsInfinite(s, progress), "Switched to MVS Infinite."), "small")
+                    progress => buddy.States.PrepareSwitchToMvsInfinite(s, progress, ui.Closing), "Switched to MVS Infinite."), "small")
                 : Button("Put back", () => Prepare(mvsi ? "Put MVS Infinite back?" : "Put back what a clean start set aside?",
-                    progress => buddy.States.PreparePutBack(s, kind, progress), $"{name} is back."), "small"));
+                    progress => buddy.States.PreparePutBack(s, kind, progress, ui.Closing), $"{name} is back."), "small"));
             rml.Append(Button("Delete for good", () => ConfirmDiscard(mvsi ? "MVS Infinite" : "what a clean start set aside",
                 $"Its {files} ({Size(k.Bytes)}) {(k.Files == 1 ? "is" : "are")} deleted from MVS Buddy's folder: Put back cannot bring them back after this.",
                 $"{name} was deleted.", () => buddy.States.Discard(s.Game, kind)), "small")).Append("</div>");
@@ -987,7 +988,7 @@ internal sealed class MainScreen
 
     // Gets a change ready off this thread (it reads the game's folder and the copy's store, and may checksum paks), then
     // asks before making it.
-    private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done)
+    private void Prepare(string title, Func<IProgress<string>, PreparedChange> prepare, string done, (string Label, Action Do)? instead = null)
     {
         message = null;
         var work = new Work();
@@ -1000,7 +1001,7 @@ internal sealed class MainScreen
         ui.Run(() => Task.FromResult(prepare(progress)), change =>
         {
             work.On = false;
-            Confirm(title, change, done);
+            Confirm(title, change, done, instead: instead);
         }, e =>
         {
             work.On = false;
@@ -1063,8 +1064,10 @@ internal sealed class MainScreen
         return rml.ToString();
     }
 
-    // What a change will do, as the change itself says, and the go-ahead; a change that cannot be made says why instead.
-    private void Confirm(string title, PreparedChange change, string done, string go = "Go ahead")
+    // What a change will do, as the change itself says, and the go-ahead; a change that cannot be made says why instead. One
+    // that will probably break something (a pak it cannot put back) says so here, is asked about a second time, and may offer
+    // another way out (deleting the undo point rather than undoing without the pak).
+    private void Confirm(string title, PreparedChange change, string done, string go = "Go ahead", (string Label, Action Do)? instead = null)
     {
         actions.Clear();
         var rml = new StringBuilder($"<h2>{Html.Text(title)}</h2><ul>");
@@ -1081,11 +1084,45 @@ internal sealed class MainScreen
             }
             rml.Append($"<div class=\"actions\">{Button("Back", ShowGame)}</div>");
         }
+        else if (change.Risk is string risk)
+        {
+            rml.Append($"<p class=\"message bad\">{Html.Text(risk)}</p>");
+            rml.Append($"<div class=\"actions\">{Button(go, () => ConfirmRisk(title, change, done, go, instead), "primary")}"
+                + (instead is { } other ? Button(other.Label, other.Do) : "") + $"{Button("Cancel", ShowGame)}</div>");
+        }
         else
         {
             rml.Append($"<div class=\"actions\">{Button(go, () => Apply(change, done), "primary")}{Button("Cancel", ShowGame)}</div>");
         }
         Show(rml.ToString());
+    }
+
+    // The second time of asking, for a change that will probably break something: what, spelled out, then it is the
+    // person's to make.
+    private void ConfirmRisk(string title, PreparedChange change, string done, string go, (string Label, Action Do)? instead)
+    {
+        actions.Clear();
+        Show($"<h2>Really? {Html.Text(title)}</h2><p class=\"message bad\">{Html.Text(change.Risk!)}</p>"
+            + "<p>This is asked twice because it will probably leave the game not working until that is done. If that is what you want, go ahead.</p>"
+            + $"<div class=\"actions\">{Button($"Yes, {LowerFirst(go)} anyway", () => Apply(change, done), "primary")}{Button("Back", () => Confirm(title, change, done, go, instead))}</div>");
+    }
+
+    private static string LowerFirst(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text.Substring(1);
+
+    // The undo point deleted for good, as the way out of an undo that cannot put a pak back.
+    private void DropUndo()
+    {
+        var copy = game!;
+        Show(Working("Deleting the undo point..."));
+        ui.Run(() =>
+        {
+            buddy.States.DropUndo(copy);
+            return Task.FromResult(true);
+        }, _ =>
+        {
+            message = ("The undo point was deleted; the last change stays as it is.", false);
+            Reload();
+        }, Failed);
     }
 
     private void Apply(PreparedChange change, string done)

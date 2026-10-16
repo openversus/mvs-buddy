@@ -12,11 +12,12 @@ public sealed class PreparedChange
 {
     private readonly Action<IProgress<string>?> apply;
 
-    internal PreparedChange(IReadOnlyList<string> summary, SettingsMergeResult? settings, string? refused, Action<IProgress<string>?> apply)
+    internal PreparedChange(IReadOnlyList<string> summary, SettingsMergeResult? settings, string? refused, Action<IProgress<string>?> apply, string? risk = null)
     {
         Summary = summary;
         Settings = settings;
         Refused = refused;
+        Risk = risk;
         this.apply = apply;
     }
 
@@ -28,6 +29,13 @@ public sealed class PreparedChange
 
     /// <summary>Why the change cannot be made as it is, naming what stands in its way; null when it can.</summary>
     public string? Refused { get; }
+
+    /// <summary>
+    /// What will probably go wrong if the change is made as it is (a pak it cannot put back), and how to fix that afterwards;
+    /// null when nothing is known to. The change can still be made: the person is told, asked a second time, and the rest is
+    /// theirs to decide.
+    /// </summary>
+    public string? Risk { get; }
 
     /// <summary>
     /// Makes the change: the game's files, then the paks. Refused, with nothing in the game touched, while the game is
@@ -335,7 +343,14 @@ public sealed class GameStates
                 (_, live) => [.. staged, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
                 (store, now, before) => store.Edit(before, InstallEdits(store, copy, now, before, cached.Tree, release.Channel, loaderName, settingsBytes, recordBytes)
                     .Concat(mvsi.Select(p => (TreeEdit)new Removal(p)))),
-                (store, before) => SetMvsInfiniteAside(store, before, mvsi),
+                (store, before) =>
+                {
+                    SetMvsInfiniteAside(store, before, mvsi);
+                    if (release.Channel == Channel.Testing)
+                    {
+                        PruneTesting(store, staged);
+                    }
+                },
                 mvsi);
             if (setWine)
             {
@@ -520,7 +535,7 @@ public sealed class GameStates
     /// there now. The paks come from MVS Buddy's sets or the profile, by checksum; one that is in neither is a reason the
     /// undo cannot be made, not something to fetch anew.
     /// </summary>
-    public PreparedChange PrepareUndo(InstallState state, IProgress<string>? progress = null)
+    public PreparedChange PrepareUndo(InstallState state, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         if (state == null)
         {
@@ -536,13 +551,41 @@ public sealed class GameStates
         var store = Open(copy);
         var (message, at) = store.Describe(previous);
         string what = message.Split('\n')[0];
-        var found = Find(state, copy, PaksIn(message), progress, out string? refused);
-        var summary = new List<string> { $"Puts this copy back as it was {what}, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
-        summary.AddRange(PakLines(state, copy, found));
-        summary.Add("Undoing again brings back what is here now.");
         string tree = store.TreeOf(previous);
-        return new PreparedChange(summary, null, refused,
-            report => Change(report, state.Game, "before an undo", $"Undo: {what}", refused, (_, _) => found, (_, _, _) => tree, restoresSets: true));
+        var found = Find(state, copy, PaksIn(message), RecordIn(store, copy, tree), progress, cancellationToken);
+        var summary = new List<string> { $"Puts this copy back as it was {what}, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
+        // An undo puts back exactly what was there, paks included; when that is Testing's last live state and Testing's paks
+        // have moved on since, it says so, and turning Testing off and on gets the current ones.
+        if (store.Tip(ReleaseCache.BranchOf(Channel.Testing)) == previous && TestingMovedOn(found, progress, cancellationToken))
+        {
+            summary.Add("Testing's paks have moved on since then: this puts back the ones it had. Turn Testing off and on again afterwards, or install it again, for the current ones.");
+        }
+        summary.AddRange(PakLines(state, copy, found.Paks));
+        summary.AddRange(found.Lines);
+        summary.Add("Undoing again brings back what is here now.");
+        return new PreparedChange(summary, null, null,
+            report => Change(report, state.Game, "before an undo", $"Undo: {what}", null, (_, _) => found.Paks, (_, _, _) => tree, restoresSets: true),
+            RiskOf(found.Missing, "what this puts back", InstallAgainFix));
+    }
+
+    /// <summary>
+    /// Deletes the undo point for good: the last change stays as it is, and there is nothing to undo until the next change.
+    /// What the last change set aside stays set aside. For a person who would rather not undo without a pak that is gone.
+    /// </summary>
+    public void DropUndo(GameInstall game)
+    {
+        var copy = Layout(game ?? throw new ArgumentNullException(nameof(game)));
+        if (!LibGit2Sharp.Repository.IsValid(copy.GitDir))
+        {
+            return;
+        }
+        var store = Open(copy);
+        store.DeleteBranch(PreviousBranch);
+        foreach (string set in SetBranches)
+        {
+            store.DeleteBranch(PreviousOf + set);
+        }
+        store.Prune();
     }
 
     /// <summary>
@@ -841,7 +884,9 @@ public sealed class GameStates
         log.LogInformation("Set aside prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
 
         var removed = ovsPaths.Concat(mvsiPaths).Concat(others).Concat(loaderPaths).Distinct(StringComparer.Ordinal).ToList();
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before a clean start", "Set aside", refused,
+        // What the undo of this is called: a turn-off is OpenVersus alone; anything more is a clean start.
+        bool turnOff = openVersus && !mvsInfinite && others.Count == 0;
+        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, turnOff ? "before OpenVersus was turned off" : "before a clean start", turnOff ? "OpenVersus, turned off" : "Set aside", refused,
             (_, live) => live.Where(p => !((openVersus && p.Home == null) || (mvsInfinite && p.Home != null))).Select(p => p.InPlace).ToList(),
             (store, _, before) => store.Edit(before, removed.Select(p => (TreeEdit)new Removal(p))),
             (store, before) =>
@@ -865,18 +910,18 @@ public sealed class GameStates
     /// live here (its version, settings and saved state), and its paks from MVS Buddy's set. Nothing is downloaded; a pak
     /// that is no longer kept is a reason it cannot be turned on as it was.
     /// </summary>
-    public PreparedChange PrepareTurnOn(InstallState state, Channel channel, IProgress<string>? progress = null) =>
-        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: false);
+    public PreparedChange PrepareTurnOn(InstallState state, Channel channel, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
+        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: false, cancellationToken);
 
     /// <summary>
     /// Gets switching from MVS Infinite to OpenVersus <paramref name="channel"/> ready: OpenVersus turned on as in
     /// <see cref="PrepareTurnOn"/>, and MVS Infinite, which cannot run with it, set aside in the same change (its plugins
     /// and paks; an earlier one set aside is replaced). <see cref="PrepareSwitchToMvsInfinite"/> switches back.
     /// </summary>
-    public PreparedChange PrepareSwitchToOpenVersus(InstallState state, Channel channel, IProgress<string>? progress = null) =>
-        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: true);
+    public PreparedChange PrepareSwitchToOpenVersus(InstallState state, Channel channel, IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
+        TurnOn(state ?? throw new ArgumentNullException(nameof(state)), channel, progress, setMvsInfiniteAside: true, cancellationToken);
 
-    private PreparedChange TurnOn(InstallState state, Channel channel, IProgress<string>? progress, bool setMvsInfiniteAside)
+    private PreparedChange TurnOn(InstallState state, Channel channel, IProgress<string>? progress, bool setMvsInfiniteAside, CancellationToken cancellationToken)
     {
         var copy = Layout(state.Game);
         string? last = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(ReleaseCache.BranchOf(channel)) : null;
@@ -888,10 +933,15 @@ public sealed class GameStates
             return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
         }
         var (message, at) = store.Describe(last!);
-        var found = Find(state, copy, PaksIn(message).Where(p => p.Home == null), progress, out string? refused);
+        var record = RecordIn(store, copy, lastTree);
+        var found = Find(state, copy, PaksIn(message).Where(p => p.Home == null), record, progress, cancellationToken);
+        var current = channel == Channel.Testing ? CurrentTestingPaks(state, copy, progress, cancellationToken) : null;
+        if (current != null)
+        {
+            found = ForTesting(found, current);
+        }
         var owned = store.Paths(lastTree).Where(p => IsOpenVersusOwned(copy, p)).ToList();
-        string version = (store.Read(lastTree, copy.Prefix + Home + InstallRecord.FileName) is byte[] json ? InstallRecord.FromJson(json) : null) is { } record
-            ? record.Version ?? record.Tag ?? "" : "";
+        string version = record?.Version ?? record?.Tag ?? "";
         var summary = new List<string> { $"Turns OpenVersus {channel}{(version.Length > 0 ? " " + version : "")} back on as it was on {at.LocalDateTime:yyyy-MM-dd HH:mm}, with its settings and saved state." };
         if (state.Channel is { } live && state.Mod.Layout != ModLayout.None)
         {
@@ -904,20 +954,46 @@ public sealed class GameStates
         {
             summary.Add(MvsInfiniteAsideLine(mvsi.Count, mvsiPaks));
         }
-        summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
+        summary.AddRange(PakLines(state, copy, found.Paks.Select(p => new PakAt(p.Name, p.Path, p.Home))
             .Concat(mvsiAside ? [] : LivePaths(state, copy).Where(p => p.Home != null))));
+        summary.AddRange(found.Lines);
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         // A loader the copy keeps (one was here at first sight) is taken out only when the state brings one back.
         bool keepLoaders = KeepsLoaders(state, copy) && !owned.Any(p => IsLoaderPath(copy, p) && p != copy.Prefix + Installer.LicenseName);
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game,
+        return new PreparedChange(summary, null, null, report => Change(report, state.Game,
             mvsiAside ? $"before switching to OpenVersus {channel}" : $"before OpenVersus {channel} was turned on",
-            mvsiAside ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", refused,
+            mvsiAside ? $"Switched to OpenVersus {channel}" : $"OpenVersus {channel}, turned on", null,
             // MVS Infinite's paks stay where they are, unless it is set aside: then they leave as its set.
-            (_, live) => [.. found, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
+            (_, live) => [.. found.Paks, .. live.Where(p => p.Home != null && !mvsiAside).Select(p => p.InPlace)],
             (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Where(p => !(keepLoaders && IsLoaderPath(copy, p))).Concat(mvsi)
                 .Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, lastTree, owned))),
-            (store, before) => SetMvsInfiniteAside(store, before, mvsi),
-            mvsi));
+            (store, before) =>
+            {
+                SetMvsInfiniteAside(store, before, mvsi);
+                if (current?.Paks != null)
+                {
+                    PruneTesting(store, current.Paks);
+                }
+            },
+            mvsi), RiskOf(found.Missing, $"OpenVersus {channel}", InstallAgainFix));
+    }
+
+    // Testing's set holds nothing but current paks once Testing is live with them, apart from what the one undo point
+    // needs: a pak pulled from the release, or folded into another, is deleted from it rather than kept for switching
+    // back, as soon as the undo of this change no longer needs it.
+    private void PruneTesting(GitStore store, IEnumerable<StagedPak> current)
+    {
+        // Runs after `previous` is this change's own undo point, so what that undo needs is what is kept.
+        var undo = store.Tip(PreviousBranch) is string previous ? PaksIn(store.Describe(previous).Message).Where(p => p.Home == null) : [];
+        try
+        {
+            paks.Prune(ReleaseCache.BranchOf(Channel.Testing), current.Where(p => p.Home == null).Select(p => new PakEntry(p.Name, p.Size, p.Sha256, p.Url)).Concat(undo));
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            // The change is made; a stale pak left in MVS Buddy's own folder is not worth a failure over it.
+            log.LogWarning(e, "The testing set was not pruned");
+        }
     }
 
     /// <summary>
@@ -925,7 +1001,7 @@ public sealed class GameStates
     /// kept state (as by <see cref="PrepareTurnOff"/>), and MVS Infinite's plugins and paks put back in the same change.
     /// The loader stays: MVS Infinite runs on any build, so the copy it was set aside with stays out when one is live.
     /// </summary>
-    public PreparedChange PrepareSwitchToMvsInfinite(InstallState state, IProgress<string>? progress = null)
+    public PreparedChange PrepareSwitchToMvsInfinite(InstallState state, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         if (state == null)
         {
@@ -943,7 +1019,7 @@ public sealed class GameStates
         string? tree = tip == null ? null : store.TreeOf(tip);
         bool loaderLive = state.Loaders.Any(l => l.IsUltimateAsiLoader);
         var paths = tree == null ? [] : store.Paths(tree).Where(p => !(loaderLive && IsLoaderPath(copy, p))).ToList();
-        var found = Find(state, copy, wanted, progress, out string? refused);
+        var found = Find(state, copy, wanted, null, progress, cancellationToken);
         var ovsPaths = WhatGoes(state, copy, openVersus: true, mvsInfinite: false, others: [], onlyOurLoader: true, keepLoaders: true).OpenVersus;
 
         var summary = new List<string>();
@@ -951,7 +1027,8 @@ public sealed class GameStates
         {
             summary.Add($"OpenVersus {live.Channel}: set aside; \"Switch to OpenVersus {live.Channel}\" brings it back as it is now, with its paks.");
         }
-        summary.Add($"MVS Infinite: {paths.Count} {Files(paths.Count)}{(found.Count > 0 ? $" and {found.Count} {Paks(found.Count)}" : "")} go back where they were.");
+        summary.Add($"MVS Infinite: {paths.Count} {Files(paths.Count)}{(found.Paks.Count > 0 ? $" and {found.Paks.Count} {Paks(found.Paks.Count)}" : "")} go back where they were.");
+        summary.AddRange(found.Lines);
         if (loaderLive)
         {
             summary.Add("Ultimate ASI Loader stays: MVS Infinite loads through it.");
@@ -962,12 +1039,12 @@ public sealed class GameStates
         }
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         log.LogInformation("Switch to MVS Infinite prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before switching to MVS Infinite", "Switched to MVS Infinite", refused,
+        return new PreparedChange(summary, null, null, report => Change(report, state.Game, "before switching to MVS Infinite", "Switched to MVS Infinite", null,
             // OpenVersus's paks leave as its channel's set; MVS Infinite's come back.
-            (_, live) => [.. found, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
+            (_, live) => [.. found.Paks, .. live.Where(p => p.Home != null).Select(p => p.InPlace)],
             (store, _, before) => store.Edit(before, ovsPaths.Select(p => (TreeEdit)new Removal(p)).Concat(tree == null ? [] : Grafts(store, tree, paths))),
             (store, _) => store.DeleteBranch(MvsInfiniteBranch),
-            paths));
+            paths), RiskOf(found.Missing, "MVS Infinite", MvsInfiniteFix));
     }
 
     // MVS Infinite's plugins live here, as the store names them. Its paks (by their names, or as the person said) are the
@@ -1020,7 +1097,7 @@ public sealed class GameStates
     /// everything else a clean start set aside. Once it is back, nothing is set aside as that any more; undo sets it aside
     /// again. For OpenVersus, see <see cref="PrepareTurnOn"/>.
     /// </summary>
-    public PreparedChange PreparePutBack(InstallState state, SetAsideKind kind, IProgress<string>? progress = null)
+    public PreparedChange PreparePutBack(InstallState state, SetAsideKind kind, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         if (state == null)
         {
@@ -1045,22 +1122,24 @@ public sealed class GameStates
         }
         string? tree = tip == null ? null : store.TreeOf(tip);
         var paths = tree == null ? [] : store.Paths(tree);
-        var found = Find(state, copy, wanted, progress, out string? refused);
-        var summary = new List<string> { $"{what}: {paths.Count} {Files(paths.Count)}{(found.Count > 0 ? $" and {found.Count} {Paks(found.Count)}" : "")} go back where they were." };
+        var found = Find(state, copy, wanted, null, progress, cancellationToken);
+        var summary = new List<string> { $"{what}: {paths.Count} {Files(paths.Count)}{(found.Paks.Count > 0 ? $" and {found.Paks.Count} {Paks(found.Paks.Count)}" : "")} go back where they were." };
+        summary.AddRange(found.Lines);
         summary.Add("Undo sets them aside again.");
         // Safe to forget the state once they are back: the files are then tracked by the live state, so undo's snapshot has them.
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, $"before {phrase} was put back", $"{what}, put back", refused,
-            (_, live) => [.. live.Select(p => p.InPlace), .. found],
+        return new PreparedChange(summary, null, null, report => Change(report, state.Game, $"before {phrase} was put back", $"{what}, put back", null,
+            (_, live) => [.. live.Select(p => p.InPlace), .. found.Paks],
             (store, _, before) => tree == null ? before : store.Edit(before, Grafts(store, tree, paths)),
             (store, _) => store.DeleteBranch(branch),
-            paths));
+            paths), RiskOf(found.Missing, what, MvsInfiniteFix));
     }
 
     /// <summary>
-    /// Deletes what is set aside as <paramref name="kind"/> for good (for OpenVersus, <paramref name="channel"/>'s state and
-    /// paks). The game's files are not touched. When the last change was the one that set it aside, undoing that change
-    /// still puts its files back in the game's folder; until the next change, so its space is freed only then. For
-    /// OpenVersus, its saved state is gone, and its paks are downloaded again if that channel is installed again.
+    /// Deletes what is set aside as <paramref name="kind"/> for good (for OpenVersus, <paramref name="channel"/>'s state; for
+    /// MVS Infinite, its plugins and paks). The game's files are not touched. When the last change was the one that set it
+    /// aside, undoing that change still puts its files back in the game's folder; until the next change, so its space is
+    /// freed only then. An OpenVersus channel's paks are kept (the channel's set): installing or putting it back does not
+    /// download them again. Only an uninstall deletes MVS Buddy's pak sets.
     /// </summary>
     public void Discard(GameInstall game, SetAsideKind kind, Channel? channel = null)
     {
@@ -1070,16 +1149,11 @@ public sealed class GameStates
             return;
         }
         var store = Open(copy);
-        string set = kind switch
-        {
-            SetAsideKind.MvsInfinite => MvsInfinitePaks,
-            SetAsideKind.OpenVersus => ReleaseCache.BranchOf(channel ?? throw new ArgumentNullException(nameof(channel))),
-            _ => "",
-        };
+        string set = kind == SetAsideKind.MvsInfinite ? MvsInfinitePaks : "";
         string branch = kind switch
         {
             SetAsideKind.MvsInfinite => MvsInfiniteBranch,
-            SetAsideKind.OpenVersus => set,
+            SetAsideKind.OpenVersus => ReleaseCache.BranchOf(channel ?? throw new ArgumentNullException(nameof(channel))),
             _ => CleanStartBranch,
         };
         store.DeleteBranch(branch);
@@ -1105,7 +1179,7 @@ public sealed class GameStates
     /// were not here then go; other files added since stay. What a clean start had set aside of it is back, so it is not
     /// set aside any more. An ordinary change: undo puts everything back as it is now.
     /// </summary>
-    public PreparedChange PrepareRollBack(InstallState state, IProgress<string>? progress = null)
+    public PreparedChange PrepareRollBack(InstallState state, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
         if (state == null)
         {
@@ -1123,8 +1197,8 @@ public sealed class GameStates
         string tree = store.TreeOf(initial);
         var paths = store.Paths(tree);
         var had = new HashSet<string>(paths, StringComparer.Ordinal);
-        var found = Find(state, copy, PaksIn(message), progress, out string? refused);
-        var foundPaths = new HashSet<string>(found.Select(p => p.Path), host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var found = Find(state, copy, PaksIn(message), RecordIn(store, copy, tree), progress, cancellationToken);
+        var foundPaths = new HashSet<string>(found.Paks.Select(p => p.Path), host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var asideNow = SetBranches.Select(store.Tip).OfType<string>().SelectMany(t => store.Paths(store.TreeOf(t)));
 
         var summary = new List<string> { $"Puts back the {paths.Count} {Files(paths.Count)} this copy had the first time MVS Buddy changed it, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
@@ -1133,8 +1207,9 @@ public sealed class GameStates
             summary.Add("The game's manifests were missing then, so that is only what MVS Buddy recognised: the mod, loaders and other plugins.");
         }
         summary.Add("The mod's files, the loader and its license that were not here then go.");
-        summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
+        summary.AddRange(PakLines(state, copy, found.Paks.Select(p => new PakAt(p.Name, p.Path, p.Home))
             .Concat(LivePaths(state, copy).Where(p => p.Home != null && !foundPaths.Contains(p.Path)))));
+        summary.AddRange(found.Lines);
         if (asideNow.Any(had.Contains))
         {
             summary.Add("What a clean start set aside of it comes back, so it is not set aside any more.");
@@ -1143,9 +1218,10 @@ public sealed class GameStates
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         log.LogInformation("Roll back prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
 
-        return new PreparedChange(summary, null, refused, report => Change(report, state.Game, "before a roll back to the first look", "Rolled back to the first look", refused,
+        string? risk = RiskOf(found.Missing, "the game as it was then", "To fix that afterwards, put the paks back by hand where they were, or install OpenVersus again.");
+        return new PreparedChange(summary, null, null, report => Change(report, state.Game, "before a roll back to the first look", "Rolled back to the first look", null,
             // Its paks; MVS Infinite's added since stay where they are.
-            (_, live) => [.. found, .. live.Where(p => p.Home != null && !foundPaths.Contains(p.Path)).Select(p => p.InPlace)],
+            (_, live) => [.. found.Paks, .. live.Where(p => p.Home != null && !foundPaths.Contains(p.Path)).Select(p => p.InPlace)],
             (store, now, before) => store.Edit(before, OpenVersusOwned(now, copy).Select(p => (TreeEdit)new Removal(p)).Concat(Grafts(store, tree, paths))),
             (store, _) =>
             {
@@ -1168,7 +1244,7 @@ public sealed class GameStates
                 }
             },
             // Its files that are here now untracked (MVS Infinite's plugin) are recorded first, so they are not in the way and undo has them.
-            paths));
+            paths), risk);
     }
 
     /// <summary>What is set aside for <paramref name="state"/>'s copy, and can be put back or turned on.</summary>
@@ -1625,15 +1701,120 @@ public sealed class GameStates
         return sources;
     }
 
-    // The paks a state had, found where they are kept now by checksum; refused names any that are nowhere.
-    private IReadOnlyList<StagedPak> Find(InstallState state, CopyLayout copy, IEnumerable<PakEntry> wanted, IProgress<string>? progress, out string? refused)
+    /// <summary>The paks a state had, as a change gets them: found or downloaded again (<paramref name="Paks"/>), or neither (<paramref name="Missing"/>); a line each for the ones not simply found.</summary>
+    private sealed record PaksFound(IReadOnlyList<StagedPak> Paks, IReadOnlyList<PakEntry> Missing, IReadOnlyList<string> Lines);
+
+    // The paks a state had: found where they are kept now by checksum; downloaded again when not, from where they came
+    // (the state's own record, or a set's manifest, names the address); left out when neither, named in Missing. A change
+    // goes ahead without them, told and asked twice, never refused: the person's call.
+    private PaksFound Find(InstallState state, CopyLayout copy, IEnumerable<PakEntry> wanted, InstallRecord? record, IProgress<string>? progress, CancellationToken cancellationToken)
     {
         var list = wanted.Where(p => p.Home != null || state.SavedPaksDirectory != null).ToList();
-        var found = paks.AtHand(list, PakSources(state, copy, list.Select(p => p.Home)), out var missing, progress);
-        refused = missing.Count == 0 ? null
-            : $"The paks that went with it are no longer kept ({string.Join(", ", missing.Select(p => p.Name))}), so it cannot be put back as it was.";
-        return found;
+        var found = paks.AtHand(list, PakSources(state, copy, list.Select(p => p.Home)), out var missing, progress).ToList();
+        var still = new List<PakEntry>();
+        var lines = new List<string>();
+        foreach (var pak in missing)
+        {
+            string? url = pak.Url ?? UrlOf(pak, record);
+            if (url == null)
+            {
+                still.Add(pak);
+                lines.Add($"{pak.Name} is not put back: it is nowhere MVS Buddy keeps paks, and there is no address to download it from again.");
+                continue;
+            }
+            try
+            {
+                found.Add(paks.Fetch(pak with { Url = url }, progress, cancellationToken));
+                lines.Add($"{pak.Name} is downloaded again: it is nowhere MVS Buddy keeps paks.");
+            }
+            catch (DownloadException e)
+            {
+                still.Add(pak);
+                lines.Add($"{pak.Name} is not put back: it is nowhere MVS Buddy keeps paks, and it could not be downloaded again ({e.Message})");
+            }
+        }
+        return new PaksFound(found, still, lines);
     }
+
+    // Where a pak came from: the record of the state being put back (by checksum, or by name for a record without one),
+    // else any set's manifest naming the same bytes.
+    private string? UrlOf(PakEntry pak, InstallRecord? record)
+    {
+        var recorded = record?.Paks.FirstOrDefault(p => p.Url != null && (p.Sha256 != null
+            ? string.Equals(p.Sha256, pak.Sha256, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(p.Name, pak.Name, StringComparison.OrdinalIgnoreCase)));
+        if (recorded?.Url != null)
+        {
+            return recorded.Url;
+        }
+        return new[] { ReleaseCache.BranchOf(Channel.Prod), ReleaseCache.BranchOf(Channel.Testing), OtherPaks }
+            .SelectMany(paks.Read).FirstOrDefault(p => p.Url != null && string.Equals(p.Sha256, pak.Sha256, StringComparison.OrdinalIgnoreCase))?.Url;
+    }
+
+    // The risk of going ahead without paks, said plainly with the way to fix it afterwards; null when none are missing.
+    private static string? RiskOf(IReadOnlyList<PakEntry> missing, string what, string fix) => missing.Count == 0 ? null
+        : $"Without {string.Join(", ", missing.Select(p => p.Name))}, {what} will probably not work: the game may crash, or run without what "
+          + (missing.Count == 1 ? "that pak holds. " : "those paks hold. ") + fix;
+
+    private const string InstallAgainFix = "To fix that afterwards, install OpenVersus again: that downloads its current paks.";
+
+    private const string MvsInfiniteFix = "MVS Buddy cannot download MVS Infinite's paks. To fix that afterwards, get them from where MVS Infinite is distributed and put them in the game's Content/Paks folder.";
+
+    /// <summary>The testing paks as GitHub has them now, staged; null with the reason when GitHub could not say, and the kept ones are used.</summary>
+    private sealed record CurrentPaks(IReadOnlyList<StagedPak>? Paks, string Line);
+
+    // Testing is the bleeding edge: the only paks valid for it are the ones on the testing paks release right now, so a
+    // testing state going live gets those (each already here by checksum, or downloaded), not the ones it had. Without
+    // GitHub, the ones it had, said so: a change is never refused for it.
+    private CurrentPaks CurrentTestingPaks(InstallState state, CopyLayout copy, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        if (state.SavedPaksDirectory == null)
+        {
+            return new CurrentPaks(null, "");
+        }
+        progress?.Report("Checking the testing paks against GitHub...");
+        try
+        {
+            var assets = catalog.TestingPaksAsync(cancellationToken).GetAwaiter().GetResult();
+            var staged = paks.StageAsync(assets, PakSources(state, copy, []), progress, cancellationToken).GetAwaiter().GetResult();
+            int downloaded = staged.Count(p => p.Downloaded);
+            return new CurrentPaks(staged, downloaded == 0
+                ? "Testing's paks are the current ones on GitHub, all already here."
+                : $"Testing's paks are the current ones on GitHub: {downloaded} of {staged.Count} downloaded, the rest already here.");
+        }
+        catch (Exception e) when (e is ReleaseCatalogException || e is DownloadException)
+        {
+            log.LogWarning(e, "The current testing paks could not be had; the kept ones are used");
+            return new CurrentPaks(null, $"GitHub could not say which paks Testing uses now ({e.Message}), so the ones kept here are used; they may be behind.");
+        }
+    }
+
+    // Whether Testing's paks on GitHub are not the ones found for a state (any current pak missing from them, or with
+    // other bytes); false when GitHub cannot say.
+    private bool TestingMovedOn(PaksFound found, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        progress?.Report("Checking the testing paks against GitHub...");
+        try
+        {
+            var current = catalog.TestingPaksAsync(cancellationToken).GetAwaiter().GetResult();
+            var had = found.Paks.Where(p => p.Home == null).ToDictionary(p => p.Name, p => p.Sha256, StringComparer.OrdinalIgnoreCase);
+            return current.Any(a => a.Sha256 != null && !(had.TryGetValue(a.Name, out var sha) && string.Equals(sha, a.Sha256, StringComparison.OrdinalIgnoreCase)));
+        }
+        catch (ReleaseCatalogException e)
+        {
+            log.LogInformation("Whether the testing paks moved on could not be checked: {Reason}", e.Message);
+            return false;
+        }
+    }
+
+    // The paks a testing state goes live with: the current ones when GitHub says, else the ones found for it.
+    private PaksFound ForTesting(PaksFound found, CurrentPaks current) => current.Paks == null
+        ? found with { Lines = [.. found.Lines, current.Line] }
+        : new PaksFound([.. current.Paks, .. found.Paks.Where(p => p.Home != null)], found.Missing.Where(p => p.Home != null).ToList(), [current.Line]);
+
+    // The record the state being put back wrote, when it has one.
+    private static InstallRecord? RecordIn(GitStore store, CopyLayout copy, string? tree) =>
+        tree != null && store.Read(tree, copy.Prefix + Home + InstallRecord.FileName) is byte[] json ? InstallRecord.FromJson(json) : null;
 
     /// <summary>The mod's paks (<paramref name="Home"/> null) and MVS Infinite's, where they are now, without reading them.</summary>
     private sealed record PakAt(string Name, string Path, string? Home);

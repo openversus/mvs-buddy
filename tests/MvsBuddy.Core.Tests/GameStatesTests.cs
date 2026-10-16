@@ -221,6 +221,198 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task Undo_downloads_again_a_pak_the_person_deleted_from_a_kept_set()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        string kept = tree.Path("data", "paks", "testing", "OVS_P.pak");
+        Assert.Equal("pak 13", Read(kept));
+        File.Delete(kept);
+        int downloads = Requests("/paks/");
+
+        var undo = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+
+        Assert.Null(undo.Refused);
+        Assert.Null(undo.Risk);
+        Assert.Contains("OVS_P.pak is downloaded again: it is nowhere MVS Buddy keeps paks.", undo.Summary);
+        Assert.Equal(downloads + 1, Requests("/paks/"));
+        undo.Apply();
+        Assert.Equal("pak 13", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.Equal("prod pak", Read(tree.Path("data", "paks", "prod", "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task Undo_without_a_pak_that_is_gone_and_cannot_be_downloaded_is_allowed_with_the_risk_said()
+    {
+        Season1Installed();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        File.Delete(tree.Path("data", "paks", "testing", "OVS_P.pak"));
+        server.Answer("/paks/2026.10.13.1-testing/OVS_P.pak", () => new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        var undo = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+
+        // Told on the first screen, allowed, and the risk is what a second screen asks about.
+        Assert.Null(undo.Refused);
+        Assert.Contains(undo.Summary, l => l.StartsWith("OVS_P.pak is not put back:", StringComparison.Ordinal) && l.Contains("could not be downloaded again", StringComparison.Ordinal));
+        Assert.StartsWith("Without OVS_P.pak, what this puts back will probably not work", undo.Risk);
+        Assert.Contains("install OpenVersus again", undo.Risk);
+        undo.Apply();
+        var after = buddy.Installs.Read(Game());
+        Assert.Equal([Path.Combine(Home, "OpenVersus_2026.10.13.1.asi")], after.Mod.Plugins);
+        Assert.False(File.Exists(Path.Combine(SavedPaks, "OVS_P.pak")));
+        // Undoing that brings prod back whole: its pak was kept all along.
+        var again = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+        Assert.Null(again.Risk);
+        again.Apply();
+        Assert.Equal("prod pak", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task Undo_without_a_pak_that_has_no_address_is_allowed_too_or_the_undo_point_is_dropped_instead()
+    {
+        // Season 1 was installed by hand: nothing says where its pak came from.
+        Season1Installed();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        Assert.Equal("pak 12", Read(tree.Path("data", "paks", "testing", "OVS_P.pak")));
+        File.Delete(tree.Path("data", "paks", "testing", "OVS_P.pak"));
+        int downloads = Requests("/paks/");
+
+        var undo = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+
+        Assert.Null(undo.Refused);
+        Assert.Contains("OVS_P.pak is not put back: it is nowhere MVS Buddy keeps paks, and there is no address to download it from again.", undo.Summary);
+        Assert.Contains("Without OVS_P.pak", undo.Risk);
+        Assert.Equal(downloads, Requests("/paks/"));
+
+        // The way out: the undo point goes, the last change stays, and nothing of the live install moves.
+        Assert.True(buddy.States.CanUndo(Game()));
+        buddy.States.DropUndo(Game());
+        Assert.False(buddy.States.CanUndo(Game()));
+        Assert.NotNull(buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Refused);
+        Assert.Equal("pak 13", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.Equal([Path.Combine(Home, "OpenVersus_2026.10.13.1.asi")], buddy.Installs.Read(Game()).Mod.Plugins);
+    }
+
+    [Fact]
+    public async Task Deleting_a_kept_channel_for_good_keeps_its_paks_so_installing_it_again_downloads_nothing()
+    {
+        Game();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        Assert.Contains(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), k => k.Kind == SetAsideKind.OpenVersus && k.Channel == Channel.Testing);
+
+        buddy.States.Discard(Game(), SetAsideKind.OpenVersus, Channel.Testing);
+
+        Assert.DoesNotContain(buddy.States.SetAsideOf(buddy.Installs.Read(Game())), k => k.Kind == SetAsideKind.OpenVersus && k.Channel == Channel.Testing);
+        Assert.Equal("pak 13", Read(tree.Path("data", "paks", "testing", "OVS_P.pak")));
+        int downloads = Requests("/paks/");
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        Assert.Equal(downloads, Requests("/paks/"));
+        Assert.Equal("pak 13", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task A_testing_state_goes_live_with_the_current_testing_paks_not_the_ones_it_had()
+    {
+        Game();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        Assert.Equal("pak 13", Read(tree.Path("data", "paks", "testing", "OVS_P.pak")));
+        // Testing's paks moved on since.
+        Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 14" });
+
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Null(on.Refused);
+        Assert.Contains("Testing's paks are the current ones on GitHub: 1 of 1 downloaded, the rest already here.", on.Summary);
+        on.Apply();
+        Assert.Equal("pak 14", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.Equal("asi 2026.10.13.1", Read(Path.Combine(Home, "OpenVersus_2026.10.13.1.asi")));
+
+        // Undo brings prod back whole; undoing that puts testing back exactly, and says when its paks moved on since.
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal("prod pak", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        var same = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+        Assert.DoesNotContain(same.Summary, l => l.StartsWith("Testing's paks have moved on", StringComparison.Ordinal));
+        Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 15" });
+        var undo = buddy.States.PrepareUndo(buddy.Installs.Read(Game()));
+        Assert.Contains("Testing's paks have moved on since then: this puts back the ones it had. Turn Testing off and on again afterwards, or install it again, for the current ones.", undo.Summary);
+        undo.Apply();
+        Assert.Equal("pak 14", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task A_testing_pak_no_longer_on_the_release_goes_from_the_profile_and_from_the_kept_set()
+    {
+        Game();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13", ["OVS_X.pak"] = "experiment" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        Assert.Equal(["OVS_P.pak", "OVS_X.pak"], Directory.EnumerateFiles(SavedPaks).Select(Path.GetFileName).Order());
+        // The experiment was folded into the main pak: it is gone from the release and the main pak's bytes changed.
+        Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 14" });
+
+        // Installing testing again: the profile holds exactly the current paks; the set keeps the old ones only as long as
+        // undoing this install needs them.
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        Assert.Equal(["OVS_P.pak"], Directory.EnumerateFiles(SavedPaks).Select(Path.GetFileName));
+        Assert.Equal("pak 14", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.Equal(["OVS_P.pak", "OVS_X.pak"], buddy.Paks.Read("testing").Select(p => p.Name).Order(StringComparer.Ordinal));
+        // So undoing it is whole, and undoing that is the current paks again.
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(("pak 13", "experiment"), (Read(Path.Combine(SavedPaks, "OVS_P.pak")), Read(Path.Combine(SavedPaks, "OVS_X.pak"))));
+        buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
+        Assert.Equal(["OVS_P.pak"], Directory.EnumerateFiles(SavedPaks).Select(Path.GetFileName));
+
+        // The next change replaces the set with what was live (pak 14 alone) and moves the undo point on; X is gone from
+        // the set, and a turn-on after that takes pak 14 out of it too, since the release moved on again.
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        Assert.Equal(["OVS_P.pak", "manifest.json"], Directory.EnumerateFiles(tree.Path("data", "paks", "testing")).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 15" });
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing).Apply();
+        Assert.Equal(["OVS_P.pak"], Directory.EnumerateFiles(SavedPaks).Select(Path.GetFileName));
+        Assert.Equal("pak 15", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+        Assert.Empty(Directory.Exists(tree.Path("data", "paks", "testing")) ? Directory.EnumerateFiles(tree.Path("data", "paks", "testing")) : []);
+        Assert.Equal("prod pak", Read(tree.Path("data", "paks", "prod", "OVS_P.pak")));
+    }
+
+    [Fact]
+    public async Task Without_github_a_testing_state_goes_live_with_the_paks_it_had_and_says_so()
+    {
+        Game();
+        var buddy = Buddy();
+        var testing = Release("2026.10.13.1", Channel.Testing, new() { ["OVS_P.pak"] = "pak 13" });
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), testing)).Apply();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        server.Answer("/repos/openversus/ovs-paks/releases/tags/paks-current", () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing);
+
+        Assert.Null(on.Refused);
+        Assert.Null(on.Risk);
+        Assert.Contains(on.Summary, l => l.StartsWith("GitHub could not say which paks Testing uses now", StringComparison.Ordinal) && l.EndsWith("they may be behind.", StringComparison.Ordinal));
+        on.Apply();
+        Assert.Equal("pak 13", Read(Path.Combine(SavedPaks, "OVS_P.pak")));
+    }
+
+    [Fact]
     public async Task Each_channel_gets_back_its_own_saved_state_and_paks_and_never_the_others()
     {
         Game();
@@ -601,11 +793,16 @@ public sealed class GameStatesTests : IDisposable
         Assert.Null(buddy.States.FirstLookOf(Game()));
         Assert.NotNull(buddy.States.PrepareRollBack(buddy.Installs.Read(Game())).Refused);
 
-        // An uninstall deletes the paks for good, so the hand install's cannot come back.
+        // An uninstall deletes the paks for good, and the hand install's has no address to come back from: the roll back
+        // goes ahead without it, told and with the risk said, never refused.
         buddy.States.PrepareUninstall(buddy.Installs.Read(Game())).Apply();
         var roll = buddy.States.PrepareRollBack(buddy.Installs.Read(Game()));
-        Assert.Contains("OVS_P.pak", roll.Refused);
-        Assert.Throws<ChangeException>(roll.Apply);
+        Assert.Null(roll.Refused);
+        Assert.Contains("OVS_P.pak is not put back: it is nowhere MVS Buddy keeps paks, and there is no address to download it from again.", roll.Summary);
+        Assert.StartsWith("Without OVS_P.pak, the game as it was then will probably not work", roll.Risk);
+        roll.Apply();
+        Assert.Equal("asi 2026.10.12.1", Read(Path.Combine(Home, "OpenVersus_2026.10.12.1.asi")));
+        Assert.False(File.Exists(Path.Combine(SavedPaks, "OVS_P.pak")));
     }
 
     private int UltimateAsiLoaders(Buddy buddy) => buddy.Installs.Read(Game()).Loaders.Count(l => l.IsUltimateAsiLoader);

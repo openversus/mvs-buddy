@@ -81,6 +81,16 @@ public sealed class ReleaseCatalog
         {
             return release.Assets.Where(IsPak).ToList();
         }
+        return await TestingPaksAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The testing paks as they are now: whatever is on the testing paks release at this moment. Testing is the bleeding
+    /// edge, so these are the only paks valid for it, whatever a copy had before.
+    /// </summary>
+    /// <exception cref="ReleaseCatalogException">GitHub could not be reached, refused, or has no testing paks release.</exception>
+    public async Task<IReadOnlyList<ReleaseAsset>> TestingPaksAsync(CancellationToken cancellationToken = default)
+    {
         var current = await GetAsync(
             $"repos/{paks.Owner}/{paks.Name}/releases/tags/{Uri.EscapeDataString(testingPaksTag)}",
             GitHubJsonContext.Default.GitHubRelease, $"{paks} has no release tagged {testingPaksTag}, where the testing paks live.",
