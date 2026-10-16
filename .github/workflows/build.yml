@@ -55,6 +55,9 @@ jobs:
       XWIN_VERSION: "0.10.0"
       XWIN_SHA256: d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88
       XWIN_SPLAT: /home/runner/.cache/xwin/splat
+      # The Windows SDK's C++ library in the sysroot refuses anything older than Clang 19 (its yvals_core.h says so), and
+      # Ubuntu's own clang package is behind that; LLVM's apt repository has the version the cross build needs.
+      LLVM_VERSION: "20"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -94,8 +97,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang lld llvm cmake ninja-build
-          # Ubuntu's packages install the LLVM tools under versioned names (clang-cl-18) and link only some of them to the
+          sudo apt-get install -y -qq cmake ninja-build
+          curl -fsSL -o "$RUNNER_TEMP/llvm.sh" https://apt.llvm.org/llvm.sh
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$LLVM_VERSION"
+          # The LLVM packages install their tools under versioned names (clang-cl-20) and link only some of them to the
           # plain ones the cross build calls; link the rest to the newest version present.
           for tool in clang-cl lld-link llvm-lib llvm-rc llvm-mt; do
             if ! command -v "$tool" >/dev/null; then
