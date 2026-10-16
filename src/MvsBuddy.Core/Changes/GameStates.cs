@@ -730,7 +730,8 @@ public sealed class GameStates
         var record = state.Record?.Copy() ?? new InstallRecord { Version = state.Mod.Version is { } v ? ModVersion.Text(v) : null };
         record.Channel = channel.ToString();
         record.ChannelFrom = "person";
-        record.At = DateTimeOffset.Now;
+        // At stays the install's: it is half of what tells this install from another one. The correction has its own time.
+        record.CorrectedAt = DateTimeOffset.Now;
         record.Buddy = BuddyVersion.Current;
         var plan = new ChangePlan(host, log);
         if (File.Exists(path))
@@ -741,7 +742,7 @@ public sealed class GameStates
         var summary = new List<string> { $"MVS Buddy counts this copy's OpenVersus as {channel} from now on." };
 
         // A change made before the correction filed this very install under the old channel, which is not a kept state of
-        // that channel: it goes. The same install: one InstallId, or neither ever run. Its pak set stays, as undo may need it.
+        // that channel: it goes. Its pak set stays, as undo may need it.
         string? misfiled = null;
         var copy = Layout(state.Game);
         if (state.Channel is { } old && old.Channel != channel && LibGit2Sharp.Repository.IsValid(copy.GitDir))
@@ -751,7 +752,8 @@ public sealed class GameStates
             if (store.Tip(branch) is string tip && store.TreeOf(tip) is string tree && store.Has(tree, copy.Prefix + Home.TrimEnd('/')))
             {
                 string live = Path.Combine(state.Game.Win64Directory, "plugins", InstallReader.ModFolder, StateFile);
-                if (InstallId(File.Exists(live) ? File.ReadAllBytes(live) : null) == InstallId(store.Read(tree, copy.Prefix + Home + StateFile)))
+                if (SameInstall(InstallId(File.Exists(live) ? File.ReadAllBytes(live) : null), state.Record,
+                    InstallId(store.Read(tree, copy.Prefix + Home + StateFile)), RecordIn(store, copy, tree)))
                 {
                     misfiled = branch;
                     summary.Add($"What MVS Buddy kept as OpenVersus {old.Channel} is this same install, so it is not kept as {old.Channel} any more.");
@@ -768,6 +770,22 @@ public sealed class GameStates
                 store.Prune();
             }
         });
+    }
+
+    // Whether two states are one install of the mod. The mod's own identity decides when both have run (an InstallId each,
+    // made once and never crossing channels); before one of them has run, MVS Buddy's own record does (one install action:
+    // the same tag at the same moment); with neither to go by, two states that never ran and were never recorded are one.
+    internal static bool SameInstall(string? liveId, InstallRecord? liveRecord, string? keptId, InstallRecord? keptRecord)
+    {
+        if (liveId != null && keptId != null)
+        {
+            return liveId == keptId;
+        }
+        if (liveRecord != null && keptRecord != null)
+        {
+            return liveRecord.Tag == keptRecord.Tag && liveRecord.At == keptRecord.At;
+        }
+        return liveId == null && keptId == null;
     }
 
     // Which install of the mod a state is: the [Identity] InstallId of its OVSState.toml, which the mod makes once and which

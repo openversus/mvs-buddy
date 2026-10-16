@@ -1427,6 +1427,47 @@ public sealed class GameStatesTests : IDisposable
     }
 
     [Fact]
+    public async Task A_state_kept_before_the_mod_first_ran_is_this_same_install_by_its_record_once_it_has()
+    {
+        Game();
+        var buddy = Buddy();
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" }))).Apply();
+        // Turned off and on before the mod ever ran: the kept state has no identity. Then it ran.
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod).Apply();
+        InstallId("p1");
+
+        var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Contains("What MVS Buddy kept as OpenVersus Prod is this same install, so it is not kept as Prod any more.", said.Summary);
+        said.Apply();
+
+        Assert.Empty(Kept(buddy));
+        // The correction has its own time; the install's stays, since it is half of what names the install.
+        var record = buddy.Installs.Read(Game()).Record!;
+        Assert.NotNull(record.CorrectedAt);
+        Assert.True(record.At < record.CorrectedAt);
+    }
+
+    [Fact]
+    public async Task Two_installs_that_never_ran_are_told_apart_by_their_records()
+    {
+        Game();
+        var buddy = Buddy();
+        var prod = Release("2026.10.14.1", Channel.Prod, new() { ["OVS_P.pak"] = "prod pak" });
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+        buddy.States.PrepareTurnOff(buddy.Installs.Read(Game())).Apply();
+        await Task.Delay(20);
+        // A second install of the same release, never run either: another install action, so the kept one is not it.
+        (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
+
+        var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
+        Assert.Equal(["MVS Buddy counts this copy's OpenVersus as Testing from now on."], said.Summary);
+        said.Apply();
+
+        Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Prod)], Kept(buddy));
+    }
+
+    [Fact]
     public async Task Saying_the_channel_keeps_another_install_filed_under_the_old_one()
     {
         Game();

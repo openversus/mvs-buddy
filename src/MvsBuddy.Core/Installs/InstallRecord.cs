@@ -24,8 +24,11 @@ public sealed class InstallRecord
     /// <summary>The release's version, such as <c>2026.10.12.01</c>.</summary>
     public string? Version { get; set; }
 
-    /// <summary>When it was installed, or when the person corrected the channel.</summary>
+    /// <summary>When it was installed. With <see cref="Tag"/>, what tells one install of the mod from another before it has run.</summary>
     public DateTimeOffset At { get; set; }
+
+    /// <summary>When the person last corrected the channel; null when they never did.</summary>
+    public DateTimeOffset? CorrectedAt { get; set; }
 
     /// <summary>MVS Buddy's version that wrote this.</summary>
     public string? Buddy { get; set; }
