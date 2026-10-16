@@ -1,0 +1,147 @@
+# Publishes a release when a version tag is pushed.
+#
+# NOTHING is built here. The release is made from the artifact of the build that already ran for the tagged commit
+# (build.yml): the exact files that were built and checked, not a rebuild of them.
+#
+# Tags are bare versions, the contents of VERSION (2026.10.16.14, not v2026.10.16.14). A suffix such as
+# 2026.10.16.14-test1 publishes as a prerelease. There are no channels: a release is a release.
+#
+# If you fork and want to make a release in your repo: bump VERSION, push, let the build finish (or don't, this workflow
+# will wait for it), then tag that commit and push the tag.
+#
+# Assets: MvsBuddy-<version>-linux-x64.tar.gz and MvsBuddy-<version>-win-x64.zip, each the one executable; a .sha256
+# beside each, and SHA256SUMS. The update check in MVS Buddy reads this repository's latest release.
+
+name: release
+
+on:
+  push:
+    # Deliberately loose. The exact format is enforced by the version check below, where a bad tag fails. A
+    # pattern that failed to match would instead mean the release silently never ran.
+    tags: [ '[0-9]*' ]
+
+permissions:
+  contents: write   # create the release
+  actions: read     # find the build run and download its artifact
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Tag must match VERSION
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          BASE="${TAG%%-*}"
+          SRC=$(tr -d '[:space:]' < VERSION)
+          echo "tag $TAG   base $BASE   VERSION $SRC"
+          # The executables answer --version with VERSION and the update check compares against the release's tag, so
+          # a release whose tag disagrees with the binary is worse than no release.
+          [ -n "$SRC" ] || { echo "::error::VERSION is empty"; exit 1; }
+          [ "$BASE" = "$SRC" ] || { echo "::error::tag $TAG does not match VERSION \"$SRC\" -- bump VERSION and tag that commit"; exit 1; }
+          {
+            echo "LABEL=$TAG"
+            echo "BASE=$BASE"
+            echo "PRERELEASE=$([ "$TAG" != "$BASE" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find the build for this commit
+        id: build
+        run: |
+          set -euo pipefail
+          # The build is triggered by the branch push, not the tag. If both were pushed together it may still be
+          # running, so wait for it; if the commit was pushed with [skip ci], or never to a branch, no build exists and
+          # never will.
+          DEADLINE=$(( $(date +%s) + 60*60 ))
+          GRACE=$(( $(date +%s) + 5*60 ))
+          while :; do
+            RUNS=$(gh run list --repo "$REPO" --workflow build.yml --commit "$GITHUB_SHA" \
+                     --json databaseId,status,conclusion --limit 20)
+            OK=$(jq -r '[.[] | select(.conclusion == "success")] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$RUNS")
+            if [ -n "$OK" ]; then echo "RUN=$OK" >> "$GITHUB_OUTPUT"; echo "using build run $OK"; break; fi
+            TOTAL=$(jq 'length' <<<"$RUNS")
+            PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$RUNS")
+            NOW=$(date +%s)
+            if [ "$TOTAL" -eq 0 ] && [ "$NOW" -ge "$GRACE" ]; then
+              echo "::error::no build exists for $GITHUB_SHA -- was it pushed with [skip ci], or never pushed to a branch?"; exit 1
+            fi
+            if [ "$TOTAL" -gt 0 ] && [ "$PENDING" -eq 0 ]; then
+              echo "::error::every build for $GITHUB_SHA finished without succeeding (a failed or canceled build); rerun it, then rerun this"; exit 1
+            fi
+            [ "$NOW" -lt "$DEADLINE" ] || { echo "::error::timed out waiting for the build of $GITHUB_SHA"; exit 1; }
+            echo "waiting for the build of $GITHUB_SHA ($TOTAL found, $PENDING still running)"
+            sleep 30
+          done
+
+      - name: The artifact must be present
+        id: artifact
+        run: |
+          set -euo pipefail
+          NAMES=$(gh api "repos/$REPO/actions/runs/${{ steps.build.outputs.RUN }}/artifacts" \
+                    --jq '.artifacts[] | select(.expired == false) | .name')
+          echo "$NAMES"
+          NAME=$(grep -- '-packages$' <<<"$NAMES" || true)
+          [ -n "$NAME" ] || { echo "::error::build run ${{ steps.build.outputs.RUN }} has no unexpired packages artifact"; exit 1; }
+          [ "$(wc -l <<<"$NAME")" -eq 1 ] || { echo "::error::build run ${{ steps.build.outputs.RUN }} has more than one packages artifact"; exit 1; }
+          echo "NAME=$NAME" >> "$GITHUB_OUTPUT"
+
+      # By name, into a directory of our own: download-artifact extracts a named artifact straight into path.
+      - name: Download the artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.artifact.outputs.NAME }}
+          run-id: ${{ steps.build.outputs.RUN }}
+          github-token: ${{ github.token }}
+          path: artifacts
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.version.outputs.BASE }}"
+          cd artifacts
+          ls -l
+          # Ties the tag to the binaries: the package script names them for the VERSION it read.
+          [ -f "MvsBuddy-$BASE-linux-x64.tar.gz" ] || { echo "::error::the artifact has no MvsBuddy-$BASE-linux-x64.tar.gz"; exit 1; }
+          [ -f "MvsBuddy-$BASE-win-x64.zip" ] || { echo "::error::the artifact has no MvsBuddy-$BASE-win-x64.zip"; exit 1; }
+          # Checksums in binary mode ("hash *file"), the explicit form a Windows sha256sum also expects. One .sha256 per
+          # file so each download has its checksum beside it, plus the combined SHA256SUMS. Verify with:
+          # sha256sum -c <file>.sha256
+          for f in MvsBuddy-*.tar.gz MvsBuddy-*.zip; do
+            sha256sum -b "$f" > "$f.sha256"
+          done
+          sha256sum -b MvsBuddy-*.tar.gz MvsBuddy-*.zip > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c ./*.sha256   # prove each file verifies before it is published
+
+      - name: Notes
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.version.outputs.BASE }}"
+          {
+            echo "Built from \`${GITHUB_SHA}\` in [build run ${{ steps.build.outputs.RUN }}](https://github.com/$REPO/actions/runs/${{ steps.build.outputs.RUN }})."
+            echo
+            echo "- \`MvsBuddy-$BASE-linux-x64.tar.gz\`: Linux (and Steam Deck). Unpack it anywhere and run \`MvsBuddy\`; it puts itself in its own folder and runs from there."
+            echo "- \`MvsBuddy-$BASE-win-x64.zip\`: Windows. Unpack it anywhere and run \`MvsBuddy.exe\`; it puts itself in its own folder and runs from there."
+            echo "- \`*.sha256\`, \`SHA256SUMS\`: checksums. Verify with \`sha256sum -c <file>.sha256\`."
+          } > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: MVS Buddy ${{ steps.version.outputs.LABEL }}
+          body_path: notes.md
+          prerelease: ${{ steps.version.outputs.PRERELEASE }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/MvsBuddy-*.tar.gz
+            artifacts/MvsBuddy-*.zip
+            artifacts/*.sha256
+            artifacts/SHA256SUMS

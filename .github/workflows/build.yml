@@ -1,0 +1,179 @@
+# Builds MVS Buddy: the core's tests, then the two native libraries (RmlUiFlat's window, for Linux in the Steam Runtime
+# "sniper" container and for Windows cross-compiled with clang-cl against an xwin SDK sysroot, as scripts/build-native.sh
+# would build it locally), then the two single-file executables packed as scripts/package.sh packs them.
+#
+# The artifact is the pair of archives exactly as they ship: MvsBuddy-<VERSION>-linux-x64.tar.gz and
+# MvsBuddy-<VERSION>-win-x64.zip. release.yml publishes the artifact of the build that already ran for a tagged commit
+# rather than building again, so every commit that may be tagged must get a build of its own: no path filter here, and
+# no cancel-in-progress (a build canceled by the next push would leave its commit with nothing to release).
+#
+# The native libraries are cached by the RmlUiFlat submodule's commit and the build scripts' contents, and are built
+# again only when one of those changes, since they take mucher longer to build than the rest.
+
+name: build
+
+on:
+  push:
+    # Branches only. A tag push goes to release.yml, which uses this workflow's artifact.
+    branches: [ '**' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  # ------------------------------------------------------------------ tests
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Patch LibGit2Sharp for netstandard2.0
+        run: scripts/patch-libgit2sharp.sh
+
+      - name: Test
+        run: dotnet test tests/MvsBuddy.Core.Tests --nologo
+
+  # ------------------------------------------------------------------ natives and packages
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      XWIN_VERSION: "0.10.0"
+      XWIN_SHA256: d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88
+      XWIN_SPLAT: /home/runner/.cache/xwin/splat
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set short SHA and the natives' key
+        id: keys
+        run: |
+          set -euo pipefail
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          # What the native libraries are built from: the submodule's commit (its own submodules are pinned by it) and
+          # the scripts that build them. A change to either builds them again; nothing else does.
+          FLAT=$(git -C external/RmlUiFlat rev-parse HEAD)
+          SCRIPTS=$(cat scripts/build-native.sh external/RmlUiFlat/cross/build-windows.sh external/RmlUiFlat/cross/xwin-clang-cl.cmake | sha256sum | cut -c1-16)
+          echo "NATIVES_KEY=natives-$FLAT-$SCRIPTS" >> "$GITHUB_OUTPUT"
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Patch LibGit2Sharp for netstandard2.0
+        run: scripts/patch-libgit2sharp.sh
+
+      - name: Native libraries (cached by what they are built from)
+        id: natives
+        uses: actions/cache@v6
+        with:
+          path: |
+            external/RmlUiFlat/native/build/linux-sniper/librmlui_c.so
+            external/RmlUiFlat/native/build/win-desktop/rmlui_c.dll
+          key: ${{ steps.keys.outputs.NATIVES_KEY }}
+
+      - name: Install the cross toolchain
+        if: steps.natives.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm cmake ninja-build
+          for tool in clang-cl lld-link llvm-lib llvm-rc llvm-mt cmake ninja docker; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool is not on PATH"; exit 1; }
+          done
+
+      - name: Install xwin
+        if: steps.natives.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          NAME="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/$NAME.tar.gz" "https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$NAME.tar.gz"
+          echo "$XWIN_SHA256  $RUNNER_TEMP/$NAME.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$NAME.tar.gz" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "$RUNNER_TEMP/$NAME/xwin" "$HOME/.local/bin/xwin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Windows SDK sysroot (cached)
+        if: steps.natives.outputs.cache-hit != 'true'
+        id: splat
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.XWIN_SPLAT }}
+          key: xwin-${{ env.XWIN_VERSION }}-sdk-x86_64
+
+      - name: Windows SDK sysroot (splat)
+        if: steps.natives.outputs.cache-hit != 'true' && steps.splat.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          xwin --accept-license --arch x86_64 splat --output "$XWIN_SPLAT"
+          [ -d "$XWIN_SPLAT/crt/include" ] || { echo "::error::no splat at $XWIN_SPLAT after xwin splat"; exit 1; }
+
+      - name: Build the native libraries
+        if: steps.natives.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          scripts/build-native.sh windows
+          scripts/build-native.sh linux
+
+      - name: The native libraries must be there
+        run: |
+          set -euo pipefail
+          RMLUISO=external/RmlUiFlat/native/build/linux-sniper/librmlui_c.so
+          RMLUIDLL=external/RmlUiFlat/native/build/win-desktop/rmlui_c.dll
+          [ -f "$RMLUISO" ] || { echo "::error::no $RMLUISO"; exit 1; }
+          [ -f "$RMLUIDLL" ] || { echo "::error::no $RMLUIDLL"; exit 1; }
+          [ "$(head -c 4 "$RMLUISO")" = "$(printf '\177ELF')" ] || { echo "::error::$RMLUISO is not an ELF file"; exit 1; }
+          [ "$(head -c 2 "$RMLUIDLL")" = "MZ" ] || { echo "::error::$RMLUIDLL is not a PE file"; exit 1; }
+          # A Steam Deck runs glibc 2.31's symbols at most: the sniper build keeps the library at 2.29.
+          NEWEST=$(objdump -T "$RMLUISO" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "newest glibc symbol: $NEWEST"
+          { echo "### Native libraries"; ls -l "$RMLUISO" "$RMLUIDLL" | sed 's/^/    /'; echo "    $NEWEST"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package
+        run: scripts/package.sh
+
+      - name: Guard - the artifact is what ships
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          TGZ="artifacts/MvsBuddy-$VERSION-linux-x64.tar.gz"
+          ZIP="artifacts/MvsBuddy-$VERSION-win-x64.zip"
+          [ -f "$TGZ" ] || { echo "::error::no $TGZ"; ls -l artifacts; exit 1; }
+          [ -f "$ZIP" ] || { echo "::error::no $ZIP"; ls -l artifacts; exit 1; }
+          # Each archive holds the one executable and nothing else, named as the package script names it.
+          [ "$(tar -tzf "$TGZ")" = "MvsBuddy" ] || { echo "::error::$TGZ does not hold MvsBuddy alone"; tar -tzf "$TGZ"; exit 1; }
+          [ "$(unzip -Z1 "$ZIP")" = "MvsBuddy.exe" ] || { echo "::error::$ZIP does not hold MvsBuddy.exe alone"; unzip -Z1 "$ZIP"; exit 1; }
+          # And the executable in each answers with the build it was made from (the Linux one runs here).
+          tar -xzf "$TGZ" -C "$RUNNER_TEMP" MvsBuddy
+          SAID=$("$RUNNER_TEMP/MvsBuddy" --version)
+          [ "$SAID" = "$VERSION" ] || { echo "::error::the Linux executable says it is $SAID, not $VERSION"; exit 1; }
+          unzip -q -o "$ZIP" -d "$RUNNER_TEMP"
+          [ "$(head -c 2 "$RUNNER_TEMP/MvsBuddy.exe")" = "MZ" ] || { echo "::error::MvsBuddy.exe is not a PE file"; exit 1; }
+          { echo "### Packages ($VERSION)"; ls -l "$TGZ" "$ZIP" | sed 's/^/    /'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: MvsBuddy-${{ steps.keys.outputs.SHORT_SHA }}-packages
+          path: |
+            artifacts/MvsBuddy-*-linux-x64.tar.gz
+            artifacts/MvsBuddy-*-win-x64.zip
+          if-no-files-found: error
