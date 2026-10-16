@@ -11,8 +11,9 @@ public sealed class Buddy : IDisposable
 {
     private readonly HttpClient? ownedHttp;
 
-    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, HttpClient? ownedHttp)
+    internal Buddy(ReleaseCatalog releases, GameFinder games, InstallReader installs, Downloads downloads, StockCheck stock, Permissions permissions, ReleaseCache cache, PakStore paks, GameStates states, Preferences preferences, HttpClient? ownedHttp)
     {
+        Preferences = preferences;
         States = states;
         Cache = cache;
         Paks = paks;
@@ -45,6 +46,9 @@ public sealed class Buddy : IDisposable
 
     /// <summary>Every change to a copy of the game (install, switch channel, turn off and on, clean start, put back, uninstall, undo), as states kept in git.</summary>
     public GameStates States { get; }
+
+    /// <summary>What the person has told the buddy about itself.</summary>
+    public Preferences Preferences { get; }
 
     /// <summary>The releases fetched so far, kept in a git repository of the buddy's own.</summary>
     internal ReleaseCache Cache { get; }

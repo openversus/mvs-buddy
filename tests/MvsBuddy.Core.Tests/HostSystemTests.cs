@@ -26,7 +26,7 @@ public sealed class HostSystemTests
     public void Steam_is_running_when_a_process_named_steam_is_and_not_when_only_a_command_line_names_it()
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "Linux's /proc");
-        Assert.False(HostSystem.SteamRunning());
+        Skip.If(HostSystem.SteamRunning(), "Steam is running on this machine, so its absence cannot be checked");
         using var mention = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("sh") { ArgumentList = { "-c", "sleep 30 # steam" }, UseShellExecute = false });
         string folder = Path.Combine(Path.GetTempPath(), "mvs-buddy-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);

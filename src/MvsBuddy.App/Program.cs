@@ -35,8 +35,25 @@ OwnedElement.Leaked = address => log.LogWarning("An element made in code was nev
 try
 {
     using var buddy = new BuddyBuilder().Logging(loggerFactory).Build();
+    // For a person who asked for a menu entry, it follows the buddy wherever it was unpacked (Linux); a failure here is
+    // not worth stopping for.
+    try
+    {
+        if (buddy.Preferences.MenuEntry == true && DesktopEntry.Install(Environment.ProcessPath ?? "", Icons.Embedded()) is string entry)
+        {
+            log.LogInformation("Wrote the menu entry {Entry}", entry);
+        }
+    }
+    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+    {
+        log.LogWarning(e, "Could not write the menu entry");
+    }
+    // The app id is the menu entry's name, so a Wayland desktop shows the entry's icon on the window; elsewhere the
+    // window carries the icon itself.
     var builder = new RmlWindowBuilder("MVS Buddy", 1024, 768)
         .Resizable()
+        .AppId(DesktopEntry.IconName)
+        .Icon(Icons.Embedded()[256])
         .Assets(typeof(MainScreen).Assembly)
         .AddFont("fonts/LatoLatin-Regular.ttf", "Lato")
         .AddFont("fonts/LatoLatin-Bold.ttf", "Lato", weight: Style.FontWeight.Bold);
@@ -45,7 +62,7 @@ try
         builder.Renderer(RmlRenderer.OpenGL);
     }
     using var window = builder.Build();
-    log.LogInformation("Window: {Renderer}", window.Renderer);
+    log.LogInformation("Window: {Renderer}, icon {Icon}", window.Renderer, window.HasIcon ? "on the window" : "from the desktop entry");
     var ui = new UiThread(window);
     var screen = new MainScreen(window, ui, buddy, version.Split('+')[0], loggerFactory.CreateLogger<MainScreen>());
     screen.Start(gameFolder == null ? null : buddy.Games.Choose(gameFolder));

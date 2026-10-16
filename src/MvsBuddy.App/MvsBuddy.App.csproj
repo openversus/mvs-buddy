@@ -42,6 +42,9 @@
     <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Regular.ttf" LogicalName="fonts/LatoLatin-Regular.ttf" />
     <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Bold.ttf" LogicalName="fonts/LatoLatin-Bold.ttf" />
     <EmbeddedResource Include="$(RmlUiFlat)THIRD-PARTY-NOTICES.txt" LogicalName="THIRD-PARTY-NOTICES.txt" />
+    <!-- The icon, at the sizes a Linux icon theme takes; res/mvs_buddy.png is the 1024 source and is not embedded. -->
+    <EmbeddedResource Include="res/mvs_buddy-512.png" LogicalName="icons/512.png" />
+    <EmbeddedResource Include="res/mvs_buddy-256.png" LogicalName="icons/256.png" />
     <None Include="$(RmlUiNative)" Condition="Exists('$(RmlUiNative)')" Link="$([System.IO.Path]::GetFileName('$(RmlUiNative)'))"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

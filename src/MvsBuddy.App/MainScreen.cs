@@ -26,6 +26,8 @@ internal sealed class MainScreen
     private GameInstall? game;
     private InstallState? state;
     private (string Text, bool Bad)? message;
+    // The menu entry is offered once, after the person's first change: not before they have had a reason to want it.
+    private bool offerMenuEntry;
     private readonly Dictionary<Channel, IReadOnlyList<Release>> releases = [];
     private readonly HashSet<Channel> fetching = [];
     private Channel channel = Channel.Prod;
@@ -323,6 +325,7 @@ internal sealed class MainScreen
             rml.Append($"<p class=\"muted\">Server: {Html.Text(server)}</p>");
         }
         rml.Append(Message());
+        rml.Append(MenuEntryOffer());
 
         rml.Append("<div class=\"actions\">");
         if (s.Mod.Layout != ModLayout.None)
@@ -410,6 +413,40 @@ internal sealed class MainScreen
             rml.Append("</div></div>");
         }
         return rml.ToString();
+    }
+
+    // Asked once, after the first change, and answered either way for good; the answer can be changed later where the
+    // buddy's own settings live. Yes writes the entry now and keeps it pointing at the buddy wherever it moves.
+    private string MenuEntryOffer()
+    {
+        if (!offerMenuEntry || buddy.Preferences.MenuEntry != null || Environment.ProcessPath is not string executable)
+        {
+            return "";
+        }
+        var rml = new StringBuilder("<div class=\"card\"><p class=\"strong\">Add MVS Buddy to the Games section of your menu?</p>");
+        rml.Append($"<p class=\"muted\">The entry would start {Html.Text(executable)}. Nothing else changes, and you will not be asked again.</p><div class=\"row\">");
+        rml.Append(Button("Add it", () =>
+        {
+            offerMenuEntry = false;
+            try
+            {
+                DesktopEntry.Install(executable, Icons.Embedded());
+                buddy.Preferences.SetMenuEntry(true);
+                message = ("MVS Buddy is in the Games section of your menu.", false);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                message = ($"The menu entry could not be written ({e.Message}).", true);
+            }
+            ShowGame();
+        }, "primary"));
+        rml.Append(Button("No thanks", () =>
+        {
+            offerMenuEntry = false;
+            buddy.Preferences.SetMenuEntry(false);
+            ShowGame();
+        }));
+        return rml.Append("</div></div>").ToString();
     }
 
     // Installing -------------------------------------------------------------------------------------------------------
@@ -966,6 +1003,7 @@ internal sealed class MainScreen
         {
             working = false;
             message = (done, false);
+            offerMenuEntry = OperatingSystem.IsLinux() && buddy.Preferences.MenuEntry == null;
             Reload();
         }, e =>
         {
