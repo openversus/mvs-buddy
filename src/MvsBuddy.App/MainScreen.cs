@@ -493,20 +493,28 @@ internal sealed class MainScreen
         {
             return "";
         }
-        var rml = new StringBuilder("<div class=\"card\"><p class=\"strong\">Add MVS Buddy to the Games section of your menu?</p>");
-        rml.Append($"<p class=\"muted\">The entry would start {Html.Text(executable)}. Nothing else changes, and you will not be asked again.</p><div class=\"row\">");
+        bool windows = OperatingSystem.IsWindows();
+        var rml = new StringBuilder($"<div class=\"card\"><p class=\"strong\">{(windows ? "Put a shortcut to MVS Buddy on your desktop?" : "Add MVS Buddy to the Games section of your menu?")}</p>");
+        rml.Append($"<p class=\"muted\">{(windows ? "The shortcut" : "The entry")} would start {Html.Text(executable)}. Nothing else changes, and you will not be asked again.</p><div class=\"row\">");
         rml.Append(Button("Add it", () =>
         {
             offerMenuEntry = false;
             try
             {
-                DesktopEntry.Install(executable, Icons.Embedded());
+                if (windows)
+                {
+                    Shortcut.Install(executable);
+                }
+                else
+                {
+                    DesktopEntry.Install(executable, Icons.Embedded());
+                }
                 buddy.Preferences.SetMenuEntry(true);
-                message = ("MVS Buddy is in the Games section of your menu.", false);
+                message = (windows ? "The shortcut is on your desktop." : "MVS Buddy is in the Games section of your menu.", false);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
-                message = ($"The menu entry could not be written ({e.Message}).", true);
+                message = ($"{(windows ? "The shortcut" : "The menu entry")} could not be written ({e.Message}).", true);
             }
             ShowGame();
         }, "primary"));
@@ -723,7 +731,8 @@ internal sealed class MainScreen
         actions.Clear();
         var rml = new StringBuilder("<h2>MVS Buddy's own files</h2>")
             .Append($"<p>Everything MVS Buddy keeps, for every copy of the game, is in {Html.Text(buddy.DataDirectory)}: kept states, what clean starts set aside, "
-                + "paks, the release cache, downloads and logs" + (OperatingSystem.IsLinux() ? ", and its entry in the applications menu." : ".") + "</p>");
+                + "paks, the release cache, downloads and logs" + (OperatingSystem.IsLinux() ? ", and its entry in the applications menu."
+                    : OperatingSystem.IsWindows() ? ", and its shortcut on the desktop." : ".") + "</p>");
         if (cleanStartJustRan)
         {
             rml.Append("<p class=\"bad\">What the clean start just set aside is in there too: deleting MVS Buddy's files deletes it for good.</p>");
@@ -1237,7 +1246,7 @@ internal sealed class MainScreen
                 then();
                 return;
             }
-            offerMenuEntry = OperatingSystem.IsLinux() && buddy.Preferences.MenuEntry == null;
+            offerMenuEntry = (OperatingSystem.IsLinux() || OperatingSystem.IsWindows()) && buddy.Preferences.MenuEntry == null;
             Reload();
         }, e =>
         {

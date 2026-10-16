@@ -63,7 +63,7 @@ public sealed class Buddy : IDisposable
 
     /// <summary>
     /// Deletes everything MVS Buddy keeps, for every copy of the game: the states, what clean starts set aside, the pak
-    /// sets, the release cache, downloads and logs, and the menu entry (Linux); the preferences too unless
+    /// sets, the release cache, downloads and logs, and the menu entry (Linux) or desktop shortcut (Windows); the preferences too unless
     /// <paramref name="keepPreferences"/>. The end of an uninstall, at the person's say-so. The states go before the
     /// cache they borrow from, and nothing after a failure, so what is left is still readable. What could not be deleted
     /// (the log MVS Buddy is writing, on Windows) is returned as <see cref="DataRemoval.Left"/>.
@@ -78,10 +78,14 @@ public sealed class Buddy : IDisposable
             {
                 deleted.Add(entry);
             }
+            if (Shortcut.Remove(host) is string shortcut)
+            {
+                deleted.Add(shortcut);
+            }
         }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
-            left.Add($"the menu entry ({e.Message})");
+            left.Add($"{(host.IsWindows ? "the desktop shortcut" : "the menu entry")} ({e.Message})");
         }
         if (string.IsNullOrEmpty(host.DataDirectory) || !Directory.Exists(host.DataDirectory))
         {

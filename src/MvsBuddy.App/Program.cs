@@ -37,18 +37,22 @@ OwnedElement.Leaked = address => log.LogWarning("An element made in code was nev
 try
 {
     using var buddy = new BuddyBuilder().Logging(loggerFactory).Build();
-    // For a person who asked for a menu entry, it follows MVS Buddy wherever it was unpacked (Linux); a failure here is
-    // not worth stopping for.
+    // For a person who asked for a menu entry (Linux) or a desktop shortcut (Windows), it follows MVS Buddy wherever it
+    // was unpacked; a failure here is not worth stopping for.
     try
     {
-        if (buddy.Preferences.MenuEntry == true && DesktopEntry.Install(Environment.ProcessPath ?? "", Icons.Embedded()) is string entry)
+        if (buddy.Preferences.MenuEntry == true)
         {
-            log.LogInformation("Wrote the menu entry {Entry}", entry);
+            string? entry = OperatingSystem.IsWindows() ? Shortcut.Install(Environment.ProcessPath ?? "") : DesktopEntry.Install(Environment.ProcessPath ?? "", Icons.Embedded());
+            if (entry != null)
+            {
+                log.LogInformation("Wrote {Entry}", entry);
+            }
         }
     }
     catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
     {
-        log.LogWarning(e, "Could not write the menu entry");
+        log.LogWarning(e, "Could not write the menu entry or shortcut");
     }
     // The app id is the menu entry's name, so a Wayland desktop shows the entry's icon on the window; elsewhere the
     // window carries the icon itself.

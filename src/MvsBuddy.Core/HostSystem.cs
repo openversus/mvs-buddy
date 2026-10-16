@@ -11,6 +11,9 @@ internal sealed class HostSystem
     /// <summary>The user's home folder.</summary>
     internal string Home { get; init; } = "";
 
+    /// <summary>The user's desktop folder (Windows, where a shortcut goes; follows a redirected desktop); empty elsewhere.</summary>
+    internal string DesktopDirectory { get; init; } = "";
+
     /// <summary>An environment variable, or null.</summary>
     internal Func<string, string?> Environment { get; init; } = _ => null;
 
@@ -62,6 +65,7 @@ internal sealed class HostSystem
         {
             IsWindows = windows,
             Home = home,
+            DesktopDirectory = windows ? System.Environment.GetFolderPath(System.Environment.SpecialFolder.DesktopDirectory) : "",
             DataDirectory = windows
                 ? Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "mvs-buddy")
                 : Path.Combine(string.IsNullOrEmpty(xdgData) ? Path.Combine(home, ".local", "share") : xdgData!, "mvs-buddy"),

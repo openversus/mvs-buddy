@@ -13,6 +13,9 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- The icon resource of the Windows executable (res/mvs_buddy.ico, from the 1024 drawing): Explorer, the taskbar and
+         the desktop shortcut show it. Linux takes the icon from the menu entry and the window instead (Icons.cs). -->
+    <ApplicationIcon>res/mvs_buddy.ico</ApplicationIcon>
     <!-- rmlui_c rides inside the executable and is extracted beside it at first run. -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
