@@ -1,6 +1,6 @@
 <Project>
   <!-- The one version number for the repository lives in VERSION at its root, as in ovs-client and RmlUiFlat. It
-       becomes the assemblies' version, which the buddy reports as its own (the User-Agent it sends to GitHub). -->
+       becomes the assemblies' version, which MVS Buddy reports as its own (the User-Agent it sends to GitHub). -->
   <PropertyGroup>
     <BuddyVersionFile>$(MSBuildThisFileDirectory)VERSION</BuddyVersionFile>
     <BuddyVersion Condition="Exists('$(BuddyVersionFile)')">$([System.IO.File]::ReadAllText('$(BuddyVersionFile)').Trim())</BuddyVersion>

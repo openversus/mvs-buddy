@@ -12,6 +12,7 @@ body {
 }
 
 #header {
+    position: relative;
     height: 52dp;
     padding: 0 24dp;
     background-color: #20242e;
@@ -22,6 +23,11 @@ body {
 .title { font-size: 20dp; font-weight: bold; }
 
 #version { margin-left: 12dp; font-size: 13dp; color: #7d8596; }
+
+#about { position: absolute; right: 24dp; top: 11dp; line-height: 18dp; margin: 0; }
+
+/* A license as its file has it: its line breaks (as <br/>), long lines wrapped. */
+.license { font-size: 12dp; color: #aeb5c4; margin: 10dp 0; }
 
 #content {
     position: absolute;

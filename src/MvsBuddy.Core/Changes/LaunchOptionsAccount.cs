@@ -1,6 +1,6 @@
 namespace MvsBuddy.Changes;
 
-/// <summary>A Steam account's launch options for MultiVersus, as the buddy read them from Steam's files.</summary>
+/// <summary>A Steam account's launch options for MultiVersus, as MVS Buddy read them from Steam's files.</summary>
 /// <param name="Id">The account id, the folder under Steam's <c>userdata</c>.</param>
 /// <param name="Name">The name Steam shows for the account, or its id when Steam's files do not say.</param>
 /// <param name="Options">The launch options as they are now; empty when there are none.</param>

@@ -67,7 +67,7 @@ internal static class Installer
         if (Downloads.Sha256Of(target) != pin.DllSha256)
         {
             File.Delete(target);
-            throw new DownloadException($"The {pin.DllName} in {Path.GetFileName(zip)} is not the build the buddy expects; it is not installed.");
+            throw new DownloadException($"The {pin.DllName} in {Path.GetFileName(zip)} is not the build MVS Buddy expects; it is not installed.");
         }
         return target;
     }

@@ -10,7 +10,7 @@ using RmlUi.Desktop;
 namespace MvsBuddy.App;
 
 /// <summary>
-/// The buddy's one window: finding the game, what is installed there, and the changes it offers. Each view is RML put
+/// MVS Buddy's one window: finding the game, what is installed there, and the changes it offers. Each view is RML put
 /// into <c>#content</c>; its buttons carry a <c>data-action</c> that names a handler registered for that render, so one
 /// click listener on the document serves every view and no element handle outlives the render that made it.
 /// </summary>
@@ -26,6 +26,7 @@ internal sealed class MainScreen
     private GameInstall? game;
     private InstallState? state;
     private (string Text, bool Bad)? message;
+    private readonly string version;
     // The menu entry is offered once, after the person's first change: not before they have had a reason to want it.
     private bool offerMenuEntry;
     private readonly Dictionary<Channel, IReadOnlyList<Release>> releases = [];
@@ -45,6 +46,7 @@ internal sealed class MainScreen
         this.window = window;
         this.ui = ui;
         this.buddy = buddy;
+        this.version = version;
         this.log = log;
         document = window.Context.LoadDocument("ui/main.rml");
         document.GetElementById("version").SetInnerRML(Html.Text(version));
@@ -83,11 +85,74 @@ internal sealed class MainScreen
     {
         for (var element = e.GetTargetElement(); !element.IsNull; element = element.GetParentNode())
         {
-            if (element.GetAttribute("data-action")?.ToString() is string id && actions.TryGetValue(id, out var action))
+            if (element.GetAttribute("data-action")?.ToString() is string id)
             {
-                ui.Post(action);
-                return;
+                // The header's About button is in the document for good, not registered per screen.
+                if (id == "about")
+                {
+                    ui.Post(ShowAbout);
+                    return;
+                }
+                if (actions.TryGetValue(id, out var action))
+                {
+                    ui.Post(action);
+                    return;
+                }
             }
+        }
+    }
+
+    // About ------------------------------------------------------------------------------------------------------------
+
+    // Back from About goes to the copy's screen when one is chosen, else to the list of copies.
+    private void ShowAbout()
+    {
+        actions.Clear();
+        var rml = new StringBuilder($"<h2>MVS Buddy {Html.Text(version)}</h2>");
+        rml.Append("<p>The OpenVersus community mod installer and version manager for MVS.</p>");
+        rml.Append("<p>MVS Buddy can install OpenVersus, easily switch between OVS release channels, enable, disable, undo any changes that it made, "
+            + "and can also restore the game to a clean, stock state.</p><p></p>");
+        rml.Append($"<p>This program is authored by RosettaSt0ned and made for people like Bumpy, AP, Choji, Shiro, and Messiah, so that saints like dragoniota, RetroTrue, aid, kiwi, "
+            + "and Tuggernuts can play the game too.</p>");
+        rml.Append($"<p class=\"muted\">MVS Buddy keeps its own files and logs in: {Html.Text(BuddyBuilder.DefaultDataDirectory)}. Nothing the game reads during runtime is ever in there.</p>");
+        rml.Append("<p class=\"muted\">Nobody is paid for any of this. OpenVersus is its own project, with its own developers (half of which happen to be me); MVS Buddy only installs it.</p>");
+        rml.Append($"<div class=\"actions\">{Button("License Notices", ShowNotices)}{Button("Back", Back, "primary")}</div>");
+        Show(rml.ToString());
+    }
+
+    // What MVS Buddy is made of and installs, each under its license; the texts are embedded in the executable.
+    private void ShowNotices()
+    {
+        actions.Clear();
+        var rml = new StringBuilder("<h2>License Notices</h2><p class=\"muted\">MVS Buddy either uses, ships with these built-in, or installs these things: each is its authors' work under the "
+        + "named and included license, provided by its authors. The \"Show License\" button displays the license as they wrote it.</p>");
+        foreach (var notice in Notices.All)
+        {
+            rml.Append($"<div class=\"card\"><p class=\"strong\">{Html.Text(notice.Name)} <span class=\"muted\">{Html.Text(notice.License)}</span></p>");
+            rml.Append($"<p class=\"muted\">{Html.Text(notice.Role)}</p><div class=\"row\">{Button("Show License", () => ShowNotice(notice), "small")}</div></div>");
+        }
+        rml.Append($"<div class=\"actions\">{Button("Back", ShowAbout)}</div>");
+        Show(rml.ToString());
+    }
+
+    private void ShowNotice(Notice notice)
+    {
+        actions.Clear();
+        // Line by line: RmlUi folds a run of newlines into one even when white space is kept, so each is a break of its own.
+        string text = Html.Text(notice.Text().Replace("\r\n", "\n")).Replace("\n", "<br/>");
+        Show($"<h2>{Html.Text(notice.Name)}</h2><p class=\"muted\">{Html.Text(notice.License)}</p><div class=\"license\">{text}</div>"
+            + $"<div class=\"actions\">{Button("Back", ShowNotices)}</div>");
+    }
+
+    private void Back()
+    {
+        if (state != null)
+        {
+            ShowGame();
+        }
+        else
+        {
+            ShowGames();
         }
     }
 
@@ -129,7 +194,7 @@ internal sealed class MainScreen
         if (found.Count == 0)
         {
             rml.Append("<h2>MultiVersus was not found</h2>");
-            rml.Append("<p>It is not where Steam or the Epic Games Launcher keep their games. The buddy can look through every drive for it.</p>");
+            rml.Append("<p>It is not where Steam or the Epic Games Launcher keep their games. MVS Buddy can look through every drive for it.</p>");
         }
         else
         {
@@ -278,7 +343,7 @@ internal sealed class MainScreen
     {
         actions.Clear();
         Show($"<h2>Use the folder you chose?</h2><p>{Html.Text(chosen.UnverifiedReason)}</p><p class=\"path\">{Html.Text(chosen.Win64Directory)}</p>"
-            + "<p>The buddy can use it anyway; it will install there and say what it could not check.</p>"
+            + "<p>MVS Buddy can use it anyway; it will install there and say what it could not check.</p>"
             + $"<div class=\"actions\">{Button("Yes, use it", () => Select(chosen), "primary")}{Button("No", () => ShowGames())}</div>");
     }
 
@@ -416,7 +481,7 @@ internal sealed class MainScreen
     }
 
     // Asked once, after the first change, and answered either way for good; the answer can be changed later where the
-    // buddy's own settings live. Yes writes the entry now and keeps it pointing at the buddy wherever it moves.
+    // buddy's own settings live. Yes writes the entry now and keeps it pointing at MVS Buddy wherever it moves.
     private string MenuEntryOffer()
     {
         if (!offerMenuEntry || buddy.Preferences.MenuEntry != null || Environment.ProcessPath is not string executable)
@@ -454,7 +519,7 @@ internal sealed class MainScreen
     // The channel to install from, its newest release on the main button, and the others on request.
     private string InstallSection(InstallState s)
     {
-        var rml = new StringBuilder("<h3>Install</h3><div class=\"row\">");
+        var rml = new StringBuilder("<h3>Install another version:</h3><div class=\"row\">");
         foreach (var (choice, label) in new[] { (Channel.Prod, "Prod"), (Channel.Testing, "Testing") })
         {
             rml.Append(Button(label, () =>
@@ -585,7 +650,7 @@ internal sealed class MainScreen
         }
     }
 
-    // Uninstalling OpenVersus, or, when the buddy kept a first look at this copy, rolling the copy back to it instead.
+    // Uninstalling OpenVersus, or, when MVS Buddy kept a first look at this copy, rolling the copy back to it instead.
     private void ChooseUninstall(InstallState s, bool openVersusHere)
     {
         void Uninstall() => Prepare("Uninstall OpenVersus?", _ => buddy.States.PrepareUninstall(s), "OpenVersus was uninstalled.");
@@ -603,7 +668,7 @@ internal sealed class MainScreen
                 .Append(Button("Uninstall OpenVersus", Uninstall, "primary")).Append("</div>");
         }
         rml.Append("<div class=\"card\"><p class=\"strong\">Roll back to how it was the first time</p>")
-            .Append($"<p class=\"muted\">This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before the buddy first changed it: what it had then comes back, "
+            .Append($"<p class=\"muted\">This copy as it was on {at.LocalDateTime:yyyy-MM-dd}, before MVS Buddy first changed it: what it had then comes back, "
                 + "the mod's files and the loader that were not here then go, and other files added since stay. Undo can undo it.</p>")
             .Append(Button("Roll back", () => Prepare("Roll back to how it was the first time?", progress => buddy.States.PrepareRollBack(s, progress),
                 "This copy is back to how it was the first time."), openVersusHere ? "" : "primary")).Append("</div>");
@@ -647,7 +712,7 @@ internal sealed class MainScreen
             rml.Append($"<p>These are MVS Infinite's, and move out of the game's folder with it: {Html.Text(string.Join(", ", known.Select(g => g.Name)))}.</p>");
         }
         rml.Append("<p>These paks in the game's Content/Paks are not the game's own. MVS Infinite's paks cannot stay there with OpenVersus, "
-            + "so pick any that came with it; the others stay where they are. The buddy remembers your answers for this copy.</p>");
+            + "so pick any that came with it; the others stay where they are. MVS Buddy remembers your answers for this copy.</p>");
         foreach (var group in unanswered)
         {
             string extensions = string.Join(", ", group.Files.Select(f => Path.GetExtension(f).TrimStart('.')).Order(StringComparer.OrdinalIgnoreCase));
@@ -704,7 +769,7 @@ internal sealed class MainScreen
 
     private static string ChannelName(InstallState s) => s.Channel is { } c ? $" ({c.Channel})" : "";
 
-    // How the buddy knows the channel, and the person's way to say otherwise.
+    // How MVS Buddy knows the channel, and the person's way to say otherwise.
     private string ChannelLine(InstallState s)
     {
         if (s.Channel is not { } c)
@@ -713,9 +778,9 @@ internal sealed class MainScreen
         }
         string how = c.Source switch
         {
-            ChannelSource.Install => $"{c.Channel}: the buddy installed it.",
+            ChannelSource.Install => $"{c.Channel}: MVS Buddy installed it.",
             ChannelSource.Person => $"{c.Channel}: as you said.",
-            _ => $"{c.Channel}, going by the server in its settings; the buddy did not install this copy.",
+            _ => $"{c.Channel}, going by the server in its settings; MVS Buddy did not install this copy.",
         };
         var rml = new StringBuilder($"<p class=\"muted\">{Html.Text(how)} ");
         if (s.Mod.Layout == ModLayout.Current)
@@ -730,7 +795,7 @@ internal sealed class MainScreen
     private void SayChannel(InstallState s, Channel channel)
     {
         message = null;
-        string done = $"The buddy counts this copy as {channel} now.";
+        string done = $"MVS Buddy counts this copy as {channel} now.";
         Show(Working("Getting it ready..."));
         ui.Run(() => Task.FromResult(buddy.States.PrepareSetChannel(s, channel)), change =>
         {
@@ -821,7 +886,7 @@ internal sealed class MainScreen
         }
         if (report.Extras.Any(e => e.Kind == ExtraKind.Loader))
         {
-            rml.Append("<p class=\"muted\">Ultimate ASI Loader goes too when nothing left needs it, unless one was here before the buddy first changed this copy.</p>");
+            rml.Append("<p class=\"muted\">Ultimate ASI Loader goes too when nothing left needs it, unless one was here before MVS Buddy first changed this copy.</p>");
         }
         foreach (string note in report.Notes)
         {
@@ -862,7 +927,7 @@ internal sealed class MainScreen
                 rml.Append(Button("Turn on", () => Prepare($"Turn {name} on?", progress => buddy.States.PrepareTurnOn(s, channel, progress), $"{name} is on."), "small"));
             }
             rml.Append(Button("Delete for good", () => ConfirmDiscard(name,
-                $"Its saved state and its paks are deleted from the buddy's folder. Installing {channel} again downloads its paks, and it starts with a new saved state.",
+                $"Its saved state and its paks are deleted from MVS Buddy's folder. Installing {channel} again downloads its paks, and it starts with a new saved state.",
                 $"{name} was deleted.", () => buddy.States.Discard(s.Game, SetAsideKind.OpenVersus, channel)), "small")).Append("</div>");
         }
         var sets = kept.Where(k => k.Kind != SetAsideKind.OpenVersus).ToList();
@@ -885,7 +950,7 @@ internal sealed class MainScreen
                 : Button("Put back", () => Prepare(mvsi ? "Put MVS Infinite back?" : "Put back what a clean start set aside?",
                     progress => buddy.States.PreparePutBack(s, kind, progress), $"{name} is back."), "small"));
             rml.Append(Button("Delete for good", () => ConfirmDiscard(mvsi ? "MVS Infinite" : "what a clean start set aside",
-                $"Its {files} ({Size(k.Bytes)}) {(k.Files == 1 ? "is" : "are")} deleted from the buddy's folder: Put back cannot bring them back after this.",
+                $"Its {files} ({Size(k.Bytes)}) {(k.Files == 1 ? "is" : "are")} deleted from MVS Buddy's folder: Put back cannot bring them back after this.",
                 $"{name} was deleted.", () => buddy.States.Discard(s.Game, kind)), "small")).Append("</div>");
         }
         return rml.ToString();
@@ -1029,7 +1094,7 @@ internal sealed class MainScreen
     {
         actions.Clear();
         Show($"<p class=\"message bad\">{Html.Text(denied.Message)}</p>"
-            + "<p>Windows can allow this account to change files there. It asks an administrator once, then the buddy does this again.</p>"
+            + "<p>Windows can allow this account to change files there. It asks an administrator once, then MVS Buddy does this again.</p>"
             + $"<div class=\"actions\">{Button("Allow and try again", () => Allow(denied.DeniedFolders, change, done), "primary")}{Button("Cancel", Reload)}</div>");
     }
 

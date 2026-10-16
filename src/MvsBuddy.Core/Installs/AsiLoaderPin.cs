@@ -1,8 +1,8 @@
 namespace MvsBuddy.Installs;
 
 /// <summary>
-/// The build of Ultimate ASI Loader the buddy installs, fetched from its author's release and checked against these
-/// hashes, so anyone can see it is the published file. One DLL serves under every proxy name: the buddy renames it to
+/// The build of Ultimate ASI Loader MVS Buddy installs, fetched from its author's release and checked against these
+/// hashes, so anyone can see it is the published file. One DLL serves under every proxy name: MVS Buddy renames it to
 /// <c>xinput1_3.dll</c> on Windows and <c>version.dll</c> under Proton.
 /// </summary>
 /// <param name="Version">The release it comes from, for people to read.</param>

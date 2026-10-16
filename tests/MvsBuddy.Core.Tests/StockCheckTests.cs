@@ -215,7 +215,7 @@ public sealed class StockCheckTests : IDisposable
         var state = buddy.Installs.Read(Game());
 
         var clean = buddy.States.PrepareSetAside(state, buddy.Stock.Read(state).Extras);
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", clean.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", clean.Summary);
         clean.Apply();
 
         var after = buddy.Installs.Read(Game());

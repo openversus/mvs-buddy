@@ -19,7 +19,7 @@ public sealed record CachedRelease(string Tag, string Commit, string Tree, bool 
 }
 
 /// <summary>
-/// The releases the buddy has fetched, in a bare git repository of its own (<c>cache.git</c> in its folder), one for
+/// The releases MVS Buddy has fetched, in a bare git repository of its own (<c>cache.git</c> in its folder), one for
 /// every copy of the game: identical files across releases and channels are kept once. A release is a commit of its
 /// extracted files (never its zip, which goes once its checksum is checked), tagged with the release's tag; a branch per
 /// channel names its newest. The release's own settings file is the base a settings merge needs, with no download.
@@ -103,7 +103,7 @@ internal sealed class ReleaseCache
 
     /// <summary>
     /// <paramref name="release"/>'s files: from the cache when it holds the release as GitHub has it now (the zip's
-    /// checksum, and the loader the buddy pins), else downloaded, checked, extracted and committed. A zip GitHub gives no
+    /// checksum, and the loader MVS Buddy pins), else downloaded, checked, extracted and committed. A zip GitHub gives no
     /// checksum for is fetched every time, as it is for an install.
     /// </summary>
     internal async Task<CachedRelease> GetAsync(Release release, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
@@ -184,7 +184,7 @@ internal sealed class ReleaseCache
     }
 
     private string DataDirectory() => string.IsNullOrEmpty(host.DataDirectory)
-        ? throw new ChangeException("The buddy has no folder of its own to keep releases in.")
+        ? throw new ChangeException("MVS Buddy has no folder of its own to keep releases in.")
         : host.DataDirectory;
 
     private void DeleteFolder(string folder)

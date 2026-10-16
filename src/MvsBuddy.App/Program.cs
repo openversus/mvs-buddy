@@ -8,7 +8,7 @@ using Serilog;
 using Serilog.Extensions.Logging;
 
 // MVS Buddy: finds MultiVersus and installs, turns off and undoes OpenVersus there, for people who should never need to
-// open a folder. Logs go to the buddy's own folder (logs/), one file a day. For looking at it without a person:
+// open a folder. Logs go to MVS Buddy's own folder (logs/), one file a day. For looking at it without a person:
 // --game=<Win64 folder> uses that copy instead of looking for one, --click="Label;Label" clicks those buttons in turn, and
 // --screenshot=<file.ppm> then saves the window and exits (OpenGL; Linux).
 
@@ -35,7 +35,7 @@ OwnedElement.Leaked = address => log.LogWarning("An element made in code was nev
 try
 {
     using var buddy = new BuddyBuilder().Logging(loggerFactory).Build();
-    // For a person who asked for a menu entry, it follows the buddy wherever it was unpacked (Linux); a failure here is
+    // For a person who asked for a menu entry, it follows MVS Buddy wherever it was unpacked (Linux); a failure here is
     // not worth stopping for.
     try
     {

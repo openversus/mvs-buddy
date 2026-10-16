@@ -41,7 +41,7 @@ public enum InstallStatus
 /// <param name="Path">The file.</param>
 /// <param name="Sha256">Its SHA-256, lowercase hex.</param>
 /// <param name="IsUltimateAsiLoader">Whether it is Ultimate ASI Loader (it carries the loader's name); another program's DLL otherwise.</param>
-/// <param name="IsPinnedBuild">Whether it is the exact build the buddy installs (<see cref="AsiLoaderPin"/>).</param>
+/// <param name="IsPinnedBuild">Whether it is the exact build MVS Buddy installs (<see cref="AsiLoaderPin"/>).</param>
 public sealed record LoaderFile(string Path, string Sha256, bool IsUltimateAsiLoader, bool IsPinnedBuild)
 {
     /// <summary>The file's name, such as <c>xinput1_3.dll</c>.</summary>
@@ -66,7 +66,7 @@ public sealed record OtherPak(string Path, long Size, bool IsMvsInfinite)
     /// <summary>The file's name.</summary>
     public string Name => System.IO.Path.GetFileName(Path);
 
-    /// <summary>Whether the person said whose it is (MVS Infinite's or not); the buddy asks only about the others.</summary>
+    /// <summary>Whether the person said whose it is (MVS Infinite's or not); MVS Buddy asks only about the others.</summary>
     public bool Answered { get; init; }
 }
 
@@ -98,10 +98,10 @@ public sealed record ModSettings(string Path, string? GameServerUrl, string? Pro
 public sealed record ModFiles(ModLayout Layout, IReadOnlyList<string> Plugins, Version? Version, ModSettings? Settings,
     IReadOnlyList<string> OldLayoutFiles, IReadOnlyList<string> Backups, IReadOnlyList<string> Files);
 
-/// <summary>How the buddy knows which channel an install is.</summary>
+/// <summary>How MVS Buddy knows which channel an install is.</summary>
 public enum ChannelSource
 {
-    /// <summary>The buddy installed it, and wrote the channel down (<see cref="InstallRecord"/>).</summary>
+    /// <summary>MVS Buddy installed it, and wrote the channel down (<see cref="InstallRecord"/>).</summary>
     Install,
 
     /// <summary>The person said so.</summary>
@@ -111,7 +111,7 @@ public enum ChannelSource
     Server,
 }
 
-/// <summary>Which channel the installed OpenVersus is, and how the buddy knows.</summary>
+/// <summary>Which channel the installed OpenVersus is, and how MVS Buddy knows.</summary>
 public sealed record ModChannel(Catalog.Channel Channel, ChannelSource Source);
 
 /// <summary>What is installed for one copy of the game, read from disk.</summary>
@@ -128,7 +128,7 @@ public sealed record InstallState
 
     /// <summary>
     /// Where the game mounts the mod's paks from (<c>%LOCALAPPDATA%\MultiVersus\Saved\Paks</c>, inside the Wine prefix on
-    /// Linux), whether or not it exists yet. Null when the buddy cannot tell: on Linux without a known prefix.
+    /// Linux), whether or not it exists yet. Null when MVS Buddy cannot tell: on Linux without a known prefix.
     /// </summary>
     public string? SavedPaksDirectory { get; init; }
 
@@ -152,7 +152,7 @@ public sealed record InstallState
     public required IReadOnlyList<OtherPlugin> OtherPlugins { get; init; }
 
     /// <summary>
-    /// The folders the buddy changes for this copy that this account may not change, as the system answers when it was
+    /// The folders MVS Buddy changes for this copy that this account may not change, as the system answers when it was
     /// read: the game's <c>Win64</c>, and for a recognised install its <c>Content/Paks</c> and its own folder, and where the
     /// mod's paks go. Empty when it may change them all. On Windows, permission can be asked for.
     /// </summary>
@@ -173,7 +173,7 @@ public sealed record InstallState
     /// </summary>
     public IReadOnlyList<string> WineOverridesMissing { get; init; } = [];
 
-    /// <summary>What the buddy wrote down when it installed the mod here; null when it did not, or the mod is not here.</summary>
+    /// <summary>What MVS Buddy wrote down when it installed the mod here; null when it did not, or the mod is not here.</summary>
     public InstallRecord? Record { get; init; }
 
     /// <summary>Which channel the installed mod is; null when the mod is not installed.</summary>

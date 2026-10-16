@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace MvsBuddy;
 
-/// <summary>The buddy's own version, from VERSION at the repository root (Directory.Build.props).</summary>
+/// <summary>MVS Buddy's own version, from VERSION at the repository root (Directory.Build.props).</summary>
 internal static class BuddyVersion
 {
     /// <summary>The version without the commit the SDK appends after a <c>+</c>.</summary>

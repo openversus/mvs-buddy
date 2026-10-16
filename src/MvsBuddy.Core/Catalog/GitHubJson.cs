@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace MvsBuddy.Catalog;
 
-/// <summary>The parts of GitHub's release JSON the buddy reads.</summary>
+/// <summary>The parts of GitHub's release JSON MVS Buddy reads.</summary>
 internal sealed class GitHubRelease
 {
     public string TagName { get; set; } = "";
@@ -18,7 +18,7 @@ internal sealed class GitHubRelease
     public List<GitHubAsset> Assets { get; set; } = [];
 }
 
-/// <summary>The parts of GitHub's release asset JSON the buddy reads.</summary>
+/// <summary>The parts of GitHub's release asset JSON MVS Buddy reads.</summary>
 internal sealed class GitHubAsset
 {
     public string Name { get; set; } = "";

@@ -17,7 +17,7 @@ public sealed class DownloadException : Exception
 
 /// <summary>
 /// Files fetched for an install, each checked against the SHA-256 it is supposed to have before anything uses it. They are
-/// kept in the buddy's folder by checksum (<c>downloads/&lt;sha256&gt;/&lt;name&gt;</c>), so a file already fetched and still
+/// kept in MVS Buddy's folder by checksum (<c>downloads/&lt;sha256&gt;/&lt;name&gt;</c>), so a file already fetched and still
 /// matching is not fetched again.
 /// </summary>
 public sealed class Downloads
@@ -123,7 +123,7 @@ public sealed class Downloads
     }
 
     private string DataDirectory() => string.IsNullOrEmpty(host.DataDirectory)
-        ? throw new DownloadException("The buddy has no folder of its own to download into.")
+        ? throw new DownloadException("MVS Buddy has no folder of its own to download into.")
         : host.DataDirectory;
 
     // Streams to a .part beside the target, hashing as it goes; keeps it only when it matches (or nothing was expected).

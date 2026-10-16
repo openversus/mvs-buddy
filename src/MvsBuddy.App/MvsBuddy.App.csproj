@@ -42,6 +42,11 @@
     <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Regular.ttf" LogicalName="fonts/LatoLatin-Regular.ttf" />
     <EmbeddedResource Include="$(RmlUiFlat)external/RmlUi/Samples/assets/LatoLatin-Bold.ttf" LogicalName="fonts/LatoLatin-Bold.ttf" />
     <EmbeddedResource Include="$(RmlUiFlat)THIRD-PARTY-NOTICES.txt" LogicalName="THIRD-PARTY-NOTICES.txt" />
+    <!-- The notices screen: every license MVS Buddy ships or installs (src/MvsBuddy.App/Notices.cs lists them). -->
+    <EmbeddedResource Include="../../LICENSE" LogicalName="notices/MVS-Buddy.txt" />
+    <EmbeddedResource Include="$(RmlUiFlat)LICENSE" LogicalName="notices/RmlUiFlat.txt" />
+    <EmbeddedResource Include="../../external/LibGit2Sharp/LICENSE.md" LogicalName="notices/LibGit2Sharp.txt" />
+    <EmbeddedResource Include="notices/*.txt" LogicalName="notices/%(Filename).txt" />
     <!-- The icon, at the sizes a Linux icon theme takes; res/mvs_buddy.png is the 1024 source and is not embedded. -->
     <EmbeddedResource Include="res/mvs_buddy-512.png" LogicalName="icons/512.png" />
     <EmbeddedResource Include="res/mvs_buddy-256.png" LogicalName="icons/256.png" />

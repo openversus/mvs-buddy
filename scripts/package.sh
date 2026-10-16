@@ -1,10 +1,10 @@
 #!/bin/bash
-# Publishes the buddy as the one file people double-click, and packs it for each platform:
+# Publishes MVS Buddy as the one file people double-click, and packs it for each platform:
 #   scripts/package.sh            -> artifacts/MvsBuddy-<version>-linux-x64.tar.gz and MvsBuddy-<version>-win-x64.zip
 #   scripts/package.sh linux      -> the tar.gz only
 #   scripts/package.sh windows    -> the zip only
 # The version is the repository's VERSION file. Each archive holds the executable alone: on Linux it keeps its execute
-# bit, and the buddy adds itself to the application menu the first time it runs. The native library each needs comes
+# bit, and MVS Buddy adds itself to the application menu the first time it runs. The native library each needs comes
 # from scripts/build-native.sh (linux: the Steam Runtime build, so the result runs on a Steam Deck).
 set -euo pipefail
 

@@ -13,7 +13,7 @@ public enum GameStore
     Epic,
 }
 
-/// <summary>How the buddy found an install.</summary>
+/// <summary>How MVS Buddy found an install.</summary>
 public enum FoundBy
 {
     /// <summary>Steam's own record of the install in the Windows registry.</summary>
@@ -35,7 +35,7 @@ public enum FoundBy
 /// <summary>A copy of MultiVersus on this machine.</summary>
 /// <param name="Win64Directory">The folder holding the executable, where the ASI loader and <c>plugins</c> go.</param>
 /// <param name="Store">Who installed it.</param>
-/// <param name="FoundBy">How the buddy found it.</param>
+/// <param name="FoundBy">How MVS Buddy found it.</param>
 public sealed record GameInstall(string Win64Directory, GameStore Store, FoundBy FoundBy)
 {
     /// <summary>The game's executable.</summary>
@@ -44,13 +44,13 @@ public sealed record GameInstall(string Win64Directory, GameStore Store, FoundBy
     /// <summary>
     /// On Linux, the Wine prefix the game runs in (the folder holding <c>drive_c</c>): Steam's Proton prefix for the game,
     /// whether or not it exists yet (Proton makes it at the first launch), or the prefix the folder sits inside. Null on
-    /// Windows, and on Linux when the buddy cannot tell.
+    /// Windows, and on Linux when MVS Buddy cannot tell.
     /// </summary>
     public string? WinePrefix { get; init; }
 
     /// <summary>
-    /// Whether the buddy could confirm this is the game: its executable, and its own paks where the game keeps them.
-    /// Every install the buddy finds is; one the user picks may not be, and installing there anyway is the user's call.
+    /// Whether MVS Buddy could confirm this is the game: its executable, and its own paks where the game keeps them.
+    /// Every install MVS Buddy finds is; one the user picks may not be, and installing there anyway is the user's call.
     /// </summary>
     public bool Verified { get; init; } = true;
 

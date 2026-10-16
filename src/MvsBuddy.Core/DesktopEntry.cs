@@ -3,7 +3,7 @@ using System.Text;
 namespace MvsBuddy;
 
 /// <summary>
-/// The buddy's entry in a Linux desktop's menu, under Games (<c>mvs-buddy.desktop</c> in the user's applications
+/// MVS Buddy's entry in a Linux desktop's menu, under Games (<c>mvs-buddy.desktop</c> in the user's applications
 /// folder), pointing at the executable that is running: written the first time it runs and again whenever it has moved,
 /// so the menu finds it wherever the person unpacked it, with its icon in the user's icon theme. Nothing else is touched.
 /// Not for Windows.
@@ -25,7 +25,7 @@ public static class DesktopEntry
     public static string? Install(string executable, IReadOnlyDictionary<int, byte[]> icons) => Install(HostSystem.Current(), executable, icons);
 
     /// <param name="host">The machine.</param>
-    /// <param name="executable">The buddy's own path.</param>
+    /// <param name="executable">MVS Buddy's own path.</param>
     /// <param name="icons">The icon as a PNG at each size (pixels square), for the icon theme's <c>hicolor</c> folders.</param>
     internal static string? Install(HostSystem host, string executable, IReadOnlyDictionary<int, byte[]> icons)
     {

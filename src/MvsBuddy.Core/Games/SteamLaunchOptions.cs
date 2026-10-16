@@ -205,7 +205,7 @@ internal static class SteamLaunchOptions
     /// <summary>
     /// <paramref name="vdf"/> with <paramref name="appId"/>'s launch options set to <paramref name="options"/>: the value
     /// replaced, or the line added to the game's block, or the game's block added under <c>apps</c>. Every other byte
-    /// stays. Null when the file has no <c>apps</c> block, which is not a file the buddy knows how to change.
+    /// stays. Null when the file has no <c>apps</c> block, which is not a file MVS Buddy knows how to change.
     /// </summary>
     internal static string? With(string vdf, string appId, string options)
     {

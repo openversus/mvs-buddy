@@ -4,7 +4,7 @@
     <link type="text/rcss" href="main.rcss"/>
 </head>
 <body>
-    <div id="header"><span class="title">MVS Buddy</span><span id="version"></span></div>
+    <div id="header"><span class="title">MVS Buddy</span><span id="version"></span><button id="about" class="small" data-action="about">About</button></div>
     <div id="content"></div>
 </body>
 </rml>

@@ -26,7 +26,7 @@ internal sealed record StagedPak(string Name, long Size, string Sha256, string? 
 }
 
 /// <summary>
-/// The channel paks, outside any git repository: <c>paks/&lt;set&gt;/</c> in the buddy's folder (prod, testing, mvsi),
+/// The channel paks, outside any git repository: <c>paks/&lt;set&gt;/</c> in MVS Buddy's folder (prod, testing, mvsi),
 /// one set each, replaced as it is when its release changes, with a <c>manifest.json</c> naming what it holds. The live
 /// channel's set is in the game's paks folder instead; moving sets between the two is a change's job, not this.
 /// </summary>
@@ -47,7 +47,7 @@ internal sealed class PakStore
 
     /// <summary>The folder every set is in, which need not exist yet.</summary>
     internal string Root => string.IsNullOrEmpty(host.DataDirectory)
-        ? throw new ChangeException("The buddy has no folder of its own to keep paks in.")
+        ? throw new ChangeException("MVS Buddy has no folder of its own to keep paks in.")
         : Path.Combine(host.DataDirectory, "paks");
 
     /// <summary>The set's folder, which need not exist yet.</summary>

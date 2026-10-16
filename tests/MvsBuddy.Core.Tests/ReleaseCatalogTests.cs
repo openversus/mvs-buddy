@@ -5,7 +5,7 @@ using MvsBuddy.Catalog;
 namespace MvsBuddy.Tests;
 
 // The fixtures are GitHub's own answers for openversus/ovs-client and openversus/ovs-paks on 2026-10-13, cut down to
-// the fields the buddy reads. Where a test needs the future (a -testing tag, paks-current), it renames a real release.
+// the fields MVS Buddy reads. Where a test needs the future (a -testing tag, paks-current), it renames a real release.
 public sealed class ReleaseCatalogTests
 {
     private const string ClientPage1 = "/repos/openversus/ovs-client/releases?per_page=100&page=1";

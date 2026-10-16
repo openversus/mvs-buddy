@@ -219,7 +219,7 @@ public sealed class GameStatesTests : IDisposable
         (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), prod)).Apply();
         Assert.Equal("prod id", Read(state));
         Assert.Equal(ProdUrl, buddy.Installs.Read(Game()).Mod.Settings!.GameServerUrl);
-        // Switching back and forth fetched no pak again: each channel's set waited in the buddy's folder.
+        // Switching back and forth fetched no pak again: each channel's set waited in MVS Buddy's folder.
         Assert.Equal(pakDownloads, Requests("/paks/"));
         Assert.Equal("testing pak", Read(tree.Path("data", "paks", "testing", "OVS_T.pak")));
     }
@@ -457,7 +457,7 @@ public sealed class GameStatesTests : IDisposable
 
         var clean = buddy.States.PrepareSetAside(buddy.Installs.Read(Game()), extras);
         Assert.Null(clean.Refused);
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", clean.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", clean.Summary);
         clean.Apply();
 
         // Stock, the mod's log, which no state holds, and the loader that was here at first sight.
@@ -495,7 +495,7 @@ public sealed class GameStatesTests : IDisposable
 
         var store = States(buddy);
         string initial = store.Tip("initial")!;
-        // Without the game's manifests, what the buddy recognises: the mod as it was (not its log), the loader, other plugins.
+        // Without the game's manifests, what MVS Buddy recognises: the mod as it was (not its log), the loader, other plugins.
         Assert.Equal(
         [
             "MultiVersus/Binaries/Win64/plugins/MVSIASI.asi",
@@ -659,7 +659,7 @@ public sealed class GameStatesTests : IDisposable
         Game();
         var buddy = Buddy();
         (await buddy.States.PrepareInstallAsync(buddy.Installs.Read(Game()), Release("2026.10.13.1", Channel.Testing, new() { ["OVS_T.pak"] = "testing pak" }))).Apply();
-        // MVS Infinite added by hand, then both set aside: the buddy's loader goes with them, a copy in each.
+        // MVS Infinite added by hand, then both set aside: MVS Buddy's loader goes with them, a copy in each.
         string mvsi = tree.File("mvsi asi", [.. Rel(Win64), "plugins", "MVSIASI.asi"]);
         string asi = Path.Combine(Home, "OpenVersus_2026.10.13.1.asi");
         StockExtra Extra(string file, ExtraKind kind) => new(file, Path.GetRelativePath(Root, file), new FileInfo(file).Length, kind);
@@ -777,7 +777,7 @@ public sealed class GameStatesTests : IDisposable
         var buddy = Buddy();
         var handInstalled = Everything();
         var off = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", off.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", off.Summary);
         off.Apply();
         Assert.True(File.Exists(Path.Combine(Win64, "version.dll")));
         Assert.Equal(InstallStatus.LoaderOnly, buddy.Installs.Read(Game()).Status);
@@ -792,7 +792,7 @@ public sealed class GameStatesTests : IDisposable
         buddy.States.PrepareUndo(buddy.Installs.Read(Game())).Apply();
         Assert.Equal(installed, Everything());
         var again = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", again.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", again.Summary);
         again.Apply();
         Assert.True(buddy.Installs.Read(Game()).Loaders.Single().IsPinnedBuild);
         var on = buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing);
@@ -898,7 +898,7 @@ public sealed class GameStatesTests : IDisposable
 
         if (refused)
         {
-            Assert.Equal($"OpenVersus {version} is older than 2026.10.01.00, the oldest release the buddy installs. Pick a newer one.", install.Refused);
+            Assert.Equal($"OpenVersus {version} is older than 2026.10.01.00, the oldest release MVS Buddy installs. Pick a newer one.", install.Refused);
             Assert.Equal(0, Requests("/rel/") + Requests("/paks/"));
             Assert.Throws<ChangeException>(install.Apply);
             Assert.Equal(unchanged, Everything());
@@ -1189,7 +1189,7 @@ public sealed class GameStatesTests : IDisposable
         buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Prod).Apply();
 
         var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
-        Assert.Contains("What the buddy kept as OpenVersus Prod is this same install, so it is not kept as Prod any more.", said.Summary);
+        Assert.Contains("What MVS Buddy kept as OpenVersus Prod is this same install, so it is not kept as Prod any more.", said.Summary);
         said.Apply();
 
         Assert.Empty(Kept(buddy));
@@ -1211,7 +1211,7 @@ public sealed class GameStatesTests : IDisposable
         InstallId("p2");
 
         var said = buddy.States.PrepareSetChannel(buddy.Installs.Read(Game()), Channel.Testing);
-        Assert.Equal(["The buddy counts this copy's OpenVersus as Testing from now on."], said.Summary);
+        Assert.Equal(["MVS Buddy counts this copy's OpenVersus as Testing from now on."], said.Summary);
         said.Apply();
 
         Assert.Equal([(SetAsideKind.OpenVersus, (Channel?)Channel.Prod)], Kept(buddy));
@@ -1229,13 +1229,13 @@ public sealed class GameStatesTests : IDisposable
         Assert.Null(buddy.Installs.Read(Game()).Record!.Loader);
 
         var off = buddy.States.PrepareTurnOff(buddy.Installs.Read(Game()));
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", off.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", off.Summary);
         off.Apply();
         Assert.True(File.Exists(loader));
         buddy.States.PrepareTurnOn(buddy.Installs.Read(Game()), Channel.Testing).Apply();
 
         var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", uninstall.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", uninstall.Summary);
         uninstall.Apply();
         Assert.True(File.Exists(loader));
     }
@@ -1255,7 +1255,7 @@ public sealed class GameStatesTests : IDisposable
             "Deletes OpenVersus 2026.10.14.01 (Prod) from the game's folder.",
             "Deletes its pak.",
             "Deletes OpenVersus Testing, kept for this copy, with its saved state and its paks.",
-            "Deletes Ultimate ASI Loader too: the buddy put it there, and no plugin is left to load through it.",
+            "Deletes Ultimate ASI Loader too: MVS Buddy put it there, and no plugin is left to load through it.",
             "There is no undo for this: to have OpenVersus again, install it.",
         ], uninstall.Summary);
         uninstall.Apply();
@@ -1274,8 +1274,8 @@ public sealed class GameStatesTests : IDisposable
         var buddy = Buddy();
 
         var uninstall = buddy.States.PrepareUninstall(buddy.Installs.Read(Game()));
-        Assert.Contains("Ultimate ASI Loader stays: one was here before the buddy first changed this copy.", uninstall.Summary);
-        Assert.Contains("The mod's logs stay in plugins/OpenVersus/logs: the buddy never touches them.", uninstall.Summary);
+        Assert.Contains("Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.", uninstall.Summary);
+        Assert.Contains("The mod's logs stay in plugins/OpenVersus/logs: MVS Buddy never touches them.", uninstall.Summary);
         uninstall.Apply();
 
         Assert.Equal(["a log"], Directory.EnumerateFiles(Home, "*", SearchOption.AllDirectories).Select(Read));
@@ -1299,7 +1299,7 @@ public sealed class GameStatesTests : IDisposable
 
         var uninstall = buddy.States.PrepareUninstall(state);
         Assert.DoesNotContain(uninstall.Summary, s => s.StartsWith("Deletes its", StringComparison.Ordinal));
-        Assert.Contains("Its paks stay where they are: the buddy cannot tell which Wine prefix this copy runs in.", uninstall.Summary);
+        Assert.Contains("Its paks stay where they are: MVS Buddy cannot tell which Wine prefix this copy runs in.", uninstall.Summary);
         uninstall.Apply();
 
         Assert.Equal("stray", Read(stray));

@@ -21,7 +21,7 @@ public sealed class HostSystemTests
         Assert.False(HostSystem.RunsGame(commandLine));
 
     // Steam's client process is named steam; a copy of sleep under that name stands in for it. A shell whose command line
-    // names Steam (this test's own, and the buddy's) does not count.
+    // names Steam (this test's own, and MVS Buddy's) does not count.
     [SkippableFact]
     public void Steam_is_running_when_a_process_named_steam_is_and_not_when_only_a_command_line_names_it()
     {

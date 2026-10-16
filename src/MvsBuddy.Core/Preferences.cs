@@ -4,24 +4,24 @@ using Tomlyn.Syntax;
 namespace MvsBuddy;
 
 /// <summary>
-/// What the person has told the buddy about itself: <c>preferences.toml</c> in the buddy's own folder, in the same form as
-/// the mod's settings file and handled the same way. The buddy's copy of the file (<see cref="Template"/>, with a comment
+/// What the person has told MVS Buddy about itself: <c>preferences.toml</c> in MVS Buddy's own folder, in the same form as
+/// the mod's settings file and handled the same way. MVS Buddy's copy of the file (<see cref="Template"/>, with a comment
 /// on every key) stands in until something is answered; after that the person's file is edited in place, so their
-/// comments and spacing stay, and rebuilt from the template only when a key the buddy needs is not in it (an older file, or
+/// comments and spacing stay, and rebuilt from the template only when a key MVS Buddy needs is not in it (an older file, or
 /// one edited down), carrying their other values over. Nothing here is about a copy of the game.
 /// </summary>
 public sealed class Preferences
 {
     internal const string FileName = "preferences.toml";
 
-    /// <summary>The file as the buddy writes it the first time, every key with its default and a comment.</summary>
+    /// <summary>The file as MVS Buddy writes it the first time, every key with its default and a comment.</summary>
     internal const string Template = """
-        # MVS Buddy's own settings, in the same form as OpenVersus.toml. The buddy writes a line here when you answer one of
+        # MVS Buddy's own settings, in the same form as OpenVersus.toml. MVS Buddy writes a line here when you answer one of
         # its questions and keeps the rest of the file as you have it. A line that starts with # is a comment.
 
         [Menu]
-        # An entry for MVS Buddy in the Games section of your menu (Linux). "ask" means the buddy asks once, after your
-        # first change; "yes" keeps the entry pointing at the buddy wherever it is; "no" leaves your menu alone.
+        # An entry for MVS Buddy in the Games section of your menu (Linux). "ask" means MVS Buddy asks once, after your
+        # first change; "yes" keeps the entry pointing at MVS Buddy wherever it is; "no" leaves your menu alone.
         Entry = "ask" # "ask", "yes" or "no"
 
         """;
@@ -39,7 +39,7 @@ public sealed class Preferences
         var parsed = TomlSettings.Parse(File.ReadAllText(file), FileName);
         if (parsed.Errors.Count > 0)
         {
-            Problem = $"{FileName} has a mistake ({parsed.Errors[0]}), so the buddy runs on its default settings; the file is set aside as {FileName}.unreadable when the buddy next writes one.";
+            Problem = $"{FileName} has a mistake ({parsed.Errors[0]}), so MVS Buddy runs on its default settings; the file is set aside as {FileName}.unreadable when MVS Buddy next writes one.";
             return;
         }
         settings = parsed;
@@ -49,7 +49,7 @@ public sealed class Preferences
     public string? Problem { get; private set; }
 
     /// <summary>
-    /// Whether the person wants the buddy in the Games section of the menu (Linux): true or false once answered, null until
+    /// Whether the person wants MVS Buddy in the Games section of the menu (Linux): true or false once answered, null until
     /// then. Asked after their first change, never before: a question about a program nobody has used yet has no answer.
     /// </summary>
     public bool? MenuEntry => Get("Menu", "Entry")?.ToLowerInvariant() switch
@@ -77,7 +77,7 @@ public sealed class Preferences
             document = TomlSettings.Parse(SettingsMerge.Merge(null, settings?.ToString(), Template).Text, FileName);
             if (!document.Set(section, key, value))
             {
-                throw new InvalidOperationException($"The buddy's own {FileName} template has no [{section}] {key}.");
+                throw new InvalidOperationException($"MVS Buddy's own {FileName} template has no [{section}] {key}.");
             }
         }
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);

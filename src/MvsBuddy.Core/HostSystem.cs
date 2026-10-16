@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace MvsBuddy;
 
-/// <summary>What the buddy reads from the machine besides files, so tests can stand in for another one.</summary>
+/// <summary>What MVS Buddy reads from the machine besides files, so tests can stand in for another one.</summary>
 internal sealed class HostSystem
 {
     /// <summary>Whether this is Windows (registry, drive letters) rather than Linux (Proton prefixes).</summary>
@@ -18,7 +18,7 @@ internal sealed class HostSystem
     internal Func<string, string, string?> Registry { get; init; } = (_, _) => null;
 
     /// <summary>
-    /// The buddy's own folder in the user's profile: <c>%LOCALAPPDATA%\mvs-buddy</c> on Windows,
+    /// MVS Buddy's own folder in the user's profile: <c>%LOCALAPPDATA%\mvs-buddy</c> on Windows,
     /// <c>$XDG_DATA_HOME/mvs-buddy</c> (by default <c>~/.local/share/mvs-buddy</c>) on Linux. Nothing the game or Ultimate
     /// ASI Loader reads is ever under it, which is why the states and the pak sets are kept there.
     /// </summary>
@@ -40,7 +40,7 @@ internal sealed class HostSystem
     /// </summary>
     internal Func<string, bool> IsChangeDenied { get; init; } = _ => false;
 
-    /// <summary>The SID of the account the buddy runs as (Windows), or null.</summary>
+    /// <summary>The SID of the account MVS Buddy runs as (Windows), or null.</summary>
     internal Func<string?> UserSid { get; init; } = () => null;
 
     /// <summary>

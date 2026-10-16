@@ -9,7 +9,7 @@ namespace MvsBuddy.Installs;
 
 /// <summary>
 /// Reads what is installed for a copy of the game, from disk, every time: the game's own updater replaces the plugin
-/// behind the buddy's back, so nothing is remembered between reads.
+/// behind MVS Buddy's back, so nothing is remembered between reads.
 /// </summary>
 public sealed class InstallReader
 {
@@ -106,7 +106,7 @@ public sealed class InstallReader
         {
             notes.Add(plugin.IsMvsInfinite
                 ? $"MVS Infinite ({Relative(win64, plugin.Path)}) is installed, and it cannot run alongside OpenVersus."
-                : $"{Relative(win64, plugin.Path)} is another ASI plugin; the buddy cannot tell whether it works alongside OpenVersus.");
+                : $"{Relative(win64, plugin.Path)} is another ASI plugin; MVS Buddy cannot tell whether it works alongside OpenVersus.");
         }
         if (paksInGame.Count > 0)
         {
@@ -132,7 +132,7 @@ public sealed class InstallReader
         {
             // Steam's launch options can set it too (WINEDLLOVERRIDES), which the registry does not show.
             notes.Add($"The game's Wine prefix does not load {string.Join(", ", overridesMissing.Select(d => d + ".dll"))} from the game's folder; unless the game's "
-                + "Steam launch options do (WINEDLLOVERRIDES), no ASI plugin runs. The buddy can set it in the prefix.");
+                + "Steam launch options do (WINEDLLOVERRIDES), no ASI plugin runs. MVS Buddy can set it in the prefix.");
         }
         bool notStarted = NotStartedYet(game);
         if (notStarted)
@@ -141,7 +141,7 @@ public sealed class InstallReader
         }
         else if (savedPaks == null)
         {
-            notes.Add("The buddy cannot tell which Wine prefix this copy runs in, so it cannot see the mod's paks.");
+            notes.Add("MVS Buddy cannot tell which Wine prefix this copy runs in, so it cannot see the mod's paks.");
         }
         // Asked of the system on every read, since a game update or a reinstall can put a folder's permissions back.
         var mayChange = new List<string> { win64 };
@@ -236,7 +236,7 @@ public sealed class InstallReader
         "MultiVersus has not been started on this computer yet, so the folder its paks go in does not exist. Start the game once and close it, then install.";
 
     // Under Wine, a prefix that is known (Steam's compatdata) but not made yet: Proton makes it the first time the game
-    // starts. The buddy does not make it, or Proton would find a half-made prefix.
+    // starts. MVS Buddy does not make it, or Proton would find a half-made prefix.
     private bool NotStartedYet(GameInstall game) =>
         !host.IsWindows && game.WinePrefix != null && !Directory.Exists(Path.Combine(game.WinePrefix, "drive_c"));
 
@@ -354,7 +354,7 @@ public sealed class InstallReader
     /// <summary>The testing releases' server port; their settings point the game at it (<c>http://prod.openversus.org:8420/</c>).</summary>
     internal const int TestingServerPort = 8420;
 
-    // What the buddy wrote down when it installed, or what the person said; else a guess from the server in the settings.
+    // What MVS Buddy wrote down when it installed, or what the person said; else a guess from the server in the settings.
     internal static ModChannel? ChannelOf(ModFiles mod, InstallRecord? record)
     {
         if (mod.Layout == ModLayout.None)

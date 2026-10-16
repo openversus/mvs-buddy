@@ -29,7 +29,7 @@ public sealed class ChannelTests
         Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Install), InstallReader.ChannelOf(testingServer, new InstallRecord { Channel = "Prod" }));
         Assert.Equal(new ModChannel(Channel.Prod, ChannelSource.Person),
             InstallReader.ChannelOf(testingServer, new InstallRecord { Channel = "Prod", ChannelFrom = "person" }));
-        // A channel the buddy does not know is no record at all.
+        // A channel MVS Buddy does not know is no record at all.
         Assert.Equal(new ModChannel(Channel.Testing, ChannelSource.Server), InstallReader.ChannelOf(testingServer, new InstallRecord { Channel = "Nightly" }));
     }
 

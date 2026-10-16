@@ -15,7 +15,7 @@ public enum PermissionOutcome
     StillDenied,
 
     /// <summary>
-    /// Not asked: only Windows has a way to ask, or a folder is one the buddy never opens up to an account (a drive, Program
+    /// Not asked: only Windows has a way to ask, or a folder is one MVS Buddy never opens up to an account (a drive, Program
     /// Files, Windows).
     /// </summary>
     NotAsked,
@@ -65,17 +65,17 @@ public sealed class Permissions
         var asked = folders.Select(Full).Distinct(comparer).ToList();
         if (!host.IsWindows)
         {
-            return NotAsked(asked, $"This account is not allowed to change files in {string.Join(", ", asked)}. The buddy has no way to ask for that here; the folders' owner can allow it.");
+            return NotAsked(asked, $"This account is not allowed to change files in {string.Join(", ", asked)}. MVS Buddy has no way to ask for that here; the folders' owner can allow it.");
         }
         var targets = Targets(asked);
         var closed = targets.Where(t => IsNeverOpened(t.Folder)).Select(t => t.Folder).ToList();
         if (closed.Count > 0)
         {
-            return NotAsked(asked, $"The buddy does not open up {string.Join(", ", closed)} to an account: it is a drive or one of Windows' own folders. Choose a folder for the game inside it instead.");
+            return NotAsked(asked, $"MVS Buddy does not open up {string.Join(", ", closed)} to an account: it is a drive or one of Windows' own folders. Choose a folder for the game inside it instead.");
         }
         if (host.UserSid() is not string sid)
         {
-            return NotAsked(asked, "The buddy could not tell which Windows account it runs as, so it did not ask.");
+            return NotAsked(asked, "MVS Buddy could not tell which Windows account it runs as, so it did not ask.");
         }
 
         // One elevated cmd runs every step, so Windows asks once. The account is named by its SID, read here before

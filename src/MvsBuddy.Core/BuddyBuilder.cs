@@ -23,12 +23,12 @@ public sealed class BuddyBuilder
     private AsiLoaderPin loaderPin = AsiLoaderPin.Default;
 
     /// <summary>
-    /// The buddy's own folder on this machine (<c>%LOCALAPPDATA%\mvs-buddy</c>, or <c>~/.local/share/mvs-buddy</c>), where
+    /// MVS Buddy's own folder on this machine (<c>%LOCALAPPDATA%\mvs-buddy</c>, or <c>~/.local/share/mvs-buddy</c>), where
     /// it keeps downloads, the release cache, each copy's states and the pak sets, and where an app can put its logs.
     /// </summary>
     public static string DefaultDataDirectory => HostSystem.Current().DataDirectory;
 
-    /// <summary>Where the buddy logs. Default: nowhere.</summary>
+    /// <summary>Where MVS Buddy logs. Default: nowhere.</summary>
     public BuddyBuilder Logging(ILoggerFactory factory)
     {
         loggerFactory = factory ?? throw new ArgumentNullException(nameof(factory));
@@ -36,8 +36,8 @@ public sealed class BuddyBuilder
     }
 
     /// <summary>
-    /// The HTTP client for GitHub and downloads. The caller keeps ownership: the buddy does not dispose it. Default: one
-    /// of the buddy's own, disposed with it.
+    /// The HTTP client for GitHub and downloads. The caller keeps ownership: MVS Buddy does not dispose it. Default: one
+    /// of MVS Buddy's own, disposed with it.
     /// </summary>
     public BuddyBuilder Http(HttpClient client)
     {
@@ -78,7 +78,7 @@ public sealed class BuddyBuilder
         return this;
     }
 
-    /// <summary>Creates the buddy.</summary>
+    /// <summary>Creates MVS Buddy.</summary>
     public Buddy Build()
     {
         bool ownsHttp = http == null;

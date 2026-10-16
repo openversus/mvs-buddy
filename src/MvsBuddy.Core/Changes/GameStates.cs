@@ -65,13 +65,13 @@ public enum SetAsideKind
 public sealed record SetAside(SetAsideKind Kind, Channel? Channel, int Files, long Bytes, DateTimeOffset At);
 
 /// <summary>
-/// The states of each copy of the game, as branches of a bare git repository in the buddy's folder whose working tree is
+/// The states of each copy of the game, as branches of a bare git repository in MVS Buddy's folder whose working tree is
 /// the game's install folder (<c>states/&lt;copy&gt;.git</c>): <c>current</c>, what is there now; <c>previous</c>, what was
 /// there before the last change, which undo puts back; and per channel (<c>prod</c>, <c>testing</c>) the last state that
 /// channel was live in, where its own <c>OVSState.toml</c> and <c>PatternsCache.toml</c> come back from. An install makes
 /// the files a state tracks match the release, so nothing of the version before stays behind. Release files are read
 /// from the cache (<see cref="ReleaseCache"/>), never stored twice. The paks are never in git: the live ones are in the
-/// profile, the others in the buddy's pak sets (<see cref="PakStore"/>), and a change moves them in the same go.
+/// profile, the others in MVS Buddy's pak sets (<see cref="PakStore"/>), and a change moves them in the same go.
 /// </summary>
 public sealed class GameStates
 {
@@ -91,7 +91,7 @@ public sealed class GameStates
     /// <summary>The pak set MVS Infinite's paks are kept in while it is set aside.</summary>
     internal const string MvsInfinitePaks = "mvsi";
 
-    /// <summary>The copy as it was the first time the buddy changed it: one commit, made then and never moved.</summary>
+    /// <summary>The copy as it was the first time MVS Buddy changed it: one commit, made then and never moved.</summary>
     internal const string InitialBranch = "initial";
 
     // The branches that hold what is set aside apart from OpenVersus. Each change keeps them as they were before it under
@@ -108,7 +108,7 @@ public sealed class GameStates
     private const string PakLine = "pak";
     private const string LoaderLine = "loader";
     private const string CoversLine = "covers";
-    private const string FirstSightLoader = "Ultimate ASI Loader stays: one was here before the buddy first changed this copy.";
+    private const string FirstSightLoader = "Ultimate ASI Loader stays: one was here before MVS Buddy first changed this copy.";
 
     private readonly HostSystem host;
     private readonly ReleaseCatalog catalog;
@@ -149,7 +149,7 @@ public sealed class GameStates
         public StagedPak InPlace => new(Name, Size, Sha256, null, Path, false) { Home = Home };
     }
 
-    /// <summary>The key that names one copy of the game in the buddy's folder: its Win64 path, hashed.</summary>
+    /// <summary>The key that names one copy of the game in MVS Buddy's folder: its Win64 path, hashed.</summary>
     internal static string CopyKey(string win64, bool windows)
     {
         string path = Path.GetFullPath(win64).TrimEnd(Path.DirectorySeparatorChar);
@@ -166,7 +166,7 @@ public sealed class GameStates
     {
         if (string.IsNullOrEmpty(host.DataDirectory))
         {
-            throw new ChangeException("The buddy has no folder of its own to keep states in.");
+            throw new ChangeException("MVS Buddy has no folder of its own to keep states in.");
         }
         string win64 = Path.GetFullPath(game.Win64Directory).TrimEnd(Path.DirectorySeparatorChar);
         string workTree = game.Verified ? Path.GetFullPath(Path.Combine(win64, "..", "..", "..")) : win64;
@@ -214,7 +214,7 @@ public sealed class GameStates
         options ??= new InstallOptions();
         if (IsOlderThanInstallable(release.Version))
         {
-            string old = $"OpenVersus {release.Tag} is older than {ModVersion.Text(OldestInstallable)}, the oldest release the buddy installs. Pick a newer one.";
+            string old = $"OpenVersus {release.Tag} is older than {ModVersion.Text(OldestInstallable)}, the oldest release MVS Buddy installs. Pick a newer one.";
             return new PreparedChange([old], null, old, _ => throw new ChangeException(old));
         }
         var copy = Layout(state.Game);
@@ -310,7 +310,7 @@ public sealed class GameStates
                 : null,
             Plugin = asi == null ? null : new RecordedFile { Name = asi.Substring(Home.Length), Sha256 = Sha256(cacheStore.Read(cached.Tree, asi)!) },
             Paks = staged.Select(p => new RecordedFile { Name = p.Name, Url = p.Url, Sha256 = p.Sha256 }).ToList(),
-            // The buddy's loader only when it puts it there, or did before (the record says so): the same build already in
+            // MVS Buddy's loader only when it puts it there, or did before (the record says so): the same build already in
             // place is the person's, and a turn-off or uninstall leaves it.
             Loader = atName is { IsPinnedBuild: true } && !(state.Record?.Loader is { } before
                     && string.Equals(before.Name, loaderName, StringComparison.OrdinalIgnoreCase) && before.Sha256 == atName.Sha256)
@@ -373,7 +373,7 @@ public sealed class GameStates
         yield return $"Wine is set to load {string.Join(", ", dlls.Select(d => d + ".dll"))} from the game's folder (in the game's Wine prefix), which the loader needs.";
         if (state.Game.WinePrefix is string prefix && host.IsWineRunningIn(prefix))
         {
-            yield return "Wine is running in the game's prefix right now, and may write over this setting when it ends. If the buddy says it is missing later, set it again with the game closed.";
+            yield return "Wine is running in the game's prefix right now, and may write over this setting when it ends. If MVS Buddy says it is missing later, set it again with the game closed.";
         }
     }
 
@@ -391,10 +391,10 @@ public sealed class GameStates
     }
 
     /// <summary>
-    /// The Steam accounts on this machine whose launch options for the game the buddy can read: what they say now, and
+    /// The Steam accounts on this machine whose launch options for the game MVS Buddy can read: what they say now, and
     /// whether they tell Wine to load the loader (<see cref="LaunchOptionsDlls"/>) from the game's folder. The accounts
     /// the game has run under; when it has run under none and there is one account, that one. Empty on Windows, for a
-    /// copy that is not Steam's, and when Steam's folder is nowhere the buddy looks.
+    /// copy that is not Steam's, and when Steam's folder is nowhere MVS Buddy looks.
     /// </summary>
     public IReadOnlyList<LaunchOptionsAccount> LaunchOptionsAccounts(InstallState state)
     {
@@ -474,7 +474,10 @@ public sealed class GameStates
         return new PreparedChange(summary, null, null, _ => WriteLaunchOptions(account, dlls, on));
     }
 
-    private const string SteamRunningText = "Steam is running, and writes its launch options over when it exits, so a change made now would be lost. Close Steam first, then set this.";
+    private const string SteamRunningText = "Steam is currently running; it overwrites games' launch options when it exits, so any changes made now would be lost. "
+                                            + "Close Steam first, hit the \"Back\" button, and then turn this setting on. To change this setting if you're using a Steam Deck, "
+                                            + "you may need to enter Desktop Mode, close Steam, change this setting, and then return to Gaming Mode. If you are unable to "
+                                            + "return to Gaming Mode, restart the Steam Deck and it will boot to Gaming Mode automatically by default.";
 
     // The file as it is at this moment (not as it was read for the screen), changed in one place and put in its place.
     private void WriteLaunchOptions(LaunchOptionsAccount account, IReadOnlyList<string> dlls, bool on)
@@ -490,10 +493,10 @@ public sealed class GameStates
         }
         catch (DecoderFallbackException e)
         {
-            throw new ChangeException($"{account.File} is not UTF-8 text throughout, so the buddy cannot change it without changing other bytes; it is left alone.", e);
+            throw new ChangeException($"{account.File} is not UTF-8 text throughout, so MVS Buddy cannot change it without changing other bytes; it is left alone.", e);
         }
         string current = SteamLaunchOptions.Read(text, GameFiles.SteamAppId)
-            ?? throw new ChangeException($"{account.File} is not laid out as the buddy expects (no apps block), so it is left alone.");
+            ?? throw new ChangeException($"{account.File} is not laid out as MVS Buddy expects (no apps block), so it is left alone.");
         string options = on ? LaunchLine.TurnedOn(current, dlls) : LaunchLine.TurnedOff(current, dlls);
         string written = account.File + ".mvs-buddy";
         File.WriteAllBytes(written, Utf8.GetBytes(SteamLaunchOptions.With(text, GameFiles.SteamAppId, options)!));
@@ -508,7 +511,7 @@ public sealed class GameStates
 
     /// <summary>
     /// Gets undoing the last change ready: the copy as it was before it, files and paks. Undoing again brings back what is
-    /// there now. The paks come from the buddy's sets or the profile, by checksum; one that is in neither is a reason the
+    /// there now. The paks come from MVS Buddy's sets or the profile, by checksum; one that is in neither is a reason the
     /// undo cannot be made, not something to fetch anew.
     /// </summary>
     public PreparedChange PrepareUndo(InstallState state, IProgress<string>? progress = null)
@@ -537,7 +540,7 @@ public sealed class GameStates
     }
 
     /// <summary>
-    /// Gets turning OpenVersus off ready: its files and paks set aside, and with them Ultimate ASI Loader when the buddy
+    /// Gets turning OpenVersus off ready: its files and paks set aside, and with them Ultimate ASI Loader when MVS Buddy
     /// put it there (its install record names it) and no other plugin is left to load through it; a loader put there some
     /// other way stays. "Turn on" (<see cref="PrepareTurnOn"/>) brings it back exactly as it is now.
     /// </summary>
@@ -577,7 +580,7 @@ public sealed class GameStates
         else if (live.Count > 0)
         {
             summary.Add("Its paks stay where they are: " + (state.NeedsFirstLaunch ? InstallReader.FirstLaunchNote
-                : "the buddy cannot tell which Wine prefix this copy runs in."));
+                : "MVS Buddy cannot tell which Wine prefix this copy runs in."));
         }
         foreach (var channel in kept)
         {
@@ -586,7 +589,7 @@ public sealed class GameStates
         bool loader = state.Loaders.Any(l => l.IsUltimateAsiLoader);
         if (loaderPaths.Count > 0)
         {
-            summary.Add("Deletes Ultimate ASI Loader too: the buddy put it there, and no plugin is left to load through it.");
+            summary.Add("Deletes Ultimate ASI Loader too: MVS Buddy put it there, and no plugin is left to load through it.");
         }
         else if (loader && staying.Count > 0)
         {
@@ -598,11 +601,11 @@ public sealed class GameStates
         }
         else if (loader)
         {
-            summary.Add("Ultimate ASI Loader stays: the buddy did not put it there.");
+            summary.Add("Ultimate ASI Loader stays: MVS Buddy did not put it there.");
         }
         if (state.Mod.Files.Any(f => f.Contains(Path.DirectorySeparatorChar + "logs" + Path.DirectorySeparatorChar)))
         {
-            summary.Add("The mod's logs stay in plugins/OpenVersus/logs: the buddy never touches them.");
+            summary.Add("The mod's logs stay in plugins/OpenVersus/logs: MVS Buddy never touches them.");
         }
         if (state.WineRegistry is string wine && LiveLoaderDlls(state).Concat(["version"]).Distinct().FirstOrDefault(d => WineRegistry.LoadsNative(File.ReadAllText(wine), d)) is string set)
         {
@@ -686,7 +689,7 @@ public sealed class GameStates
             plan.Delete(path);
         }
         plan.Write(path, record.ToJson());
-        var summary = new List<string> { $"The buddy counts this copy's OpenVersus as {channel} from now on." };
+        var summary = new List<string> { $"MVS Buddy counts this copy's OpenVersus as {channel} from now on." };
 
         // A change made before the correction filed this very install under the old channel, which is not a kept state of
         // that channel: it goes. The same install: one InstallId, or neither ever run. Its pak set stays, as undo may need it.
@@ -702,7 +705,7 @@ public sealed class GameStates
                 if (InstallId(File.Exists(live) ? File.ReadAllBytes(live) : null) == InstallId(store.Read(tree, copy.Prefix + Home + StateFile)))
                 {
                     misfiled = branch;
-                    summary.Add($"What the buddy kept as OpenVersus {old.Channel} is this same install, so it is not kept as {old.Channel} any more.");
+                    summary.Add($"What MVS Buddy kept as OpenVersus {old.Channel} is this same install, so it is not kept as {old.Channel} any more.");
                 }
             }
         }
@@ -826,7 +829,7 @@ public sealed class GameStates
         }
         else if (going.Count > 0 && state.Loaders.Any(l => l.IsUltimateAsiLoader))
         {
-            summary.Add("Ultimate ASI Loader stays: the buddy did not put it there.");
+            summary.Add("Ultimate ASI Loader stays: MVS Buddy did not put it there.");
         }
         summary.Add(UndoLine(state, "Undo puts everything back as it is now"));
         log.LogInformation("Set aside prepared for {Folder}: {Summary}", copy.WorkTree, string.Join(" | ", summary));
@@ -853,7 +856,7 @@ public sealed class GameStates
 
     /// <summary>
     /// Gets turning OpenVersus <paramref name="channel"/> on ready: the mod exactly as it was when that channel was last
-    /// live here (its version, settings and saved state), and its paks from the buddy's set. Nothing is downloaded; a pak
+    /// live here (its version, settings and saved state), and its paks from MVS Buddy's set. Nothing is downloaded; a pak
     /// that is no longer kept is a reason it cannot be turned on as it was.
     /// </summary>
     public PreparedChange PrepareTurnOn(InstallState state, Channel channel, IProgress<string>? progress = null) =>
@@ -1083,7 +1086,7 @@ public sealed class GameStates
         store.Prune();
     }
 
-    /// <summary>When the buddy first changed <paramref name="game"/>'s copy, which a roll-back goes back to; null when it has no first look of it.</summary>
+    /// <summary>When MVS Buddy first changed <paramref name="game"/>'s copy, which a roll-back goes back to; null when it has no first look of it.</summary>
     public DateTimeOffset? FirstLookOf(GameInstall game)
     {
         var copy = Layout(game ?? throw new ArgumentNullException(nameof(game)));
@@ -1091,7 +1094,7 @@ public sealed class GameStates
     }
 
     /// <summary>
-    /// Gets rolling back to how this copy was the first time the buddy changed it ready: the files it had then come back as
+    /// Gets rolling back to how this copy was the first time MVS Buddy changed it ready: the files it had then come back as
     /// they were, with their paks (found by checksum, never downloaded); the mod's files, the loader and its license that
     /// were not here then go; other files added since stay. What a clean start had set aside of it is back, so it is not
     /// set aside any more. An ordinary change: undo puts everything back as it is now.
@@ -1106,7 +1109,7 @@ public sealed class GameStates
         string? initial = LibGit2Sharp.Repository.IsValid(copy.GitDir) ? Open(copy).Tip(InitialBranch) : null;
         if (initial == null)
         {
-            const string nothing = "The buddy has no first look at this copy to roll back to: it began keeping one after this copy was first changed.";
+            const string nothing = "MVS Buddy has no first look at this copy to roll back to: it began keeping one after this copy was first changed.";
             return new PreparedChange([nothing], null, nothing, _ => throw new ChangeException(nothing));
         }
         var store = Open(copy);
@@ -1118,10 +1121,10 @@ public sealed class GameStates
         var foundPaths = new HashSet<string>(found.Select(p => p.Path), host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var asideNow = SetBranches.Select(store.Tip).OfType<string>().SelectMany(t => store.Paths(store.TreeOf(t)));
 
-        var summary = new List<string> { $"Puts back the {paths.Count} {Files(paths.Count)} this copy had the first time the buddy changed it, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
+        var summary = new List<string> { $"Puts back the {paths.Count} {Files(paths.Count)} this copy had the first time MVS Buddy changed it, on {at.LocalDateTime:yyyy-MM-dd HH:mm}." };
         if (message.Split('\n').Contains(CoversLine + "\trecognised"))
         {
-            summary.Add("The game's manifests were missing then, so that is only what the buddy recognised: the mod, loaders and other plugins.");
+            summary.Add("The game's manifests were missing then, so that is only what MVS Buddy recognised: the mod, loaders and other plugins.");
         }
         summary.Add("The mod's files, the loader and its license that were not here then go.");
         summary.AddRange(PakLines(state, copy, found.Select(p => new PakAt(p.Name, p.Path, p.Home))
@@ -1232,7 +1235,7 @@ public sealed class GameStates
         // The first change of this copy: no state yet. Kept even if this change is then refused, since nothing has moved.
         if (store.Tip(CurrentBranch) == null && store.Tip(InitialBranch) == null)
         {
-            progress?.Report("Keeping how this copy is before the buddy first changes it...");
+            progress?.Report("Keeping how this copy is before MVS Buddy first changes it...");
             MakeInitial(store, copy, now, live);
             log.LogInformation("{Title}: first look kept in {Seconds:F1} s", title, clock.Elapsed.TotalSeconds);
         }
@@ -1253,8 +1256,8 @@ public sealed class GameStates
         if (inTheWay.Count > 0)
         {
             throw new ChangeException(inTheWay.Count == 1
-                ? $"{inTheWay[0]} is already there and is not part of anything the buddy keeps, so it is not replaced. Move it away, then try again."
-                : $"These are already there and are not part of anything the buddy keeps, so they are not replaced: {string.Join(", ", inTheWay)}. Move them away, then try again.");
+                ? $"{inTheWay[0]} is already there and is not part of anything MVS Buddy keeps, so it is not replaced. Move it away, then try again."
+                : $"These are already there and are not part of anything MVS Buddy keeps, so they are not replaced: {string.Join(", ", inTheWay)}. Move them away, then try again.");
         }
         var pakPlan = PakPlan(now, copy, live, paksAfter(now, live));
         foreach (var (path, _) in diff)
@@ -1296,15 +1299,15 @@ public sealed class GameStates
                 Point(store, set.Key, set.Value);
             }
         }
-        progress?.Report("Tidying up the buddy's folder...");
+        progress?.Report("Tidying up MVS Buddy's folder...");
         after?.Invoke(store, beforeTree);
         store.Prune();
         Retain(progress);
         log.LogInformation("{Title}: done for {Folder} in {Seconds:F1} s", title, copy.WorkTree, clock.Elapsed.TotalSeconds);
     }
 
-    // `initial`: the copy before the buddy first changes it, for rolling back to and for the rule that a loader there then is
-    // never taken away. What the game did not ship (StockCheck's extras); without the game's manifests, what the buddy
+    // `initial`: the copy before MVS Buddy first changes it, for rolling back to and for the rule that a loader there then is
+    // never taken away. What the game did not ship (StockCheck's extras); without the game's manifests, what MVS Buddy
     // recognises (the mod, the loaders and the license, other plugins), and the message says so. Made through an index of its
     // own, so the states do not start tracking these files. The paks of the mod and MVS Infinite are lines by checksum, never
     // in git; the loaders are lines too.
@@ -1320,12 +1323,12 @@ public sealed class GameStates
         var paths = files.Where(f => !paks.Contains(f) && File.Exists(f)).Select(f => Relative(copy, f)).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
         string lines = (report.HasManifests ? "" : $"{CoversLine}\trecognised\n")
             + string.Concat(now.Loaders.Where(l => l.IsUltimateAsiLoader).Select(l => $"{LoaderLine}\t{l.FileName}\t{l.Sha256}\n"));
-        string message = Message("How this copy was the first time the buddy changed it", live);
+        string message = Message("How this copy was the first time MVS Buddy changed it", live);
         int split = message.IndexOf("\n\n", StringComparison.Ordinal) + 2;
         store.Commit(InitialBranch, store.TreeOfFiles(paths), message.Substring(0, split) + lines + message.Substring(split));
     }
 
-    // Whether the copy keeps its loaders whatever else goes: one was there the first time the buddy saw it. That
+    // Whether the copy keeps its loaders whatever else goes: one was there the first time MVS Buddy saw it. That
     // is `initial`'s loader lines; before the first change, what is there now; for a copy whose states are older than
     // `initial`, no: the install record's rule alone.
     private bool KeepsLoaders(InstallState state, CopyLayout copy)
@@ -1349,7 +1352,7 @@ public sealed class GameStates
         || (path.StartsWith(copy.Prefix, StringComparison.Ordinal) && path.IndexOf('/', copy.Prefix.Length) < 0
             && InstallReader.ProxyNames.Contains(path.Substring(copy.Prefix.Length), StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>The oldest release the buddy installs; an older one is refused before anything is downloaded.</summary>
+    /// <summary>The oldest release MVS Buddy installs; an older one is refused before anything is downloaded.</summary>
     internal static readonly Version OldestInstallable = new(2026, 10, 1, 0);
 
     // Older than OldestInstallable, with a missing part read as 0 (Version counts 2026.10.1 as older than 2026.10.1.0). A
@@ -1498,7 +1501,7 @@ public sealed class GameStates
     // The paks, as they will be: the target's where each belongs (the mod's in the profile, MVS Infinite's in the game's
     // folder; those already there and the same stay put), and the ones live now that the target does not use kept as a
     // set, replacing that set's older paks: the mod's as the set of the channel live now, MVS Infinite's as its own.
-    // Incoming paks are set aside in the buddy's folder first, since one may have a leaving pak's name or come from the very
+    // Incoming paks are set aside in MVS Buddy's folder first, since one may have a leaving pak's name or come from the very
     // set the leaving ones replace.
     private ChangePlan PakPlan(InstallState now, CopyLayout copy, IReadOnlyList<LivePak> live, IReadOnlyList<StagedPak> target)
     {
@@ -1601,7 +1604,7 @@ public sealed class GameStates
     }
 
     // Where a pak may already be: the profile first (so one there stays put), then where MVS Infinite's are (likewise),
-    // then the buddy's sets, then where hand-placed ones are.
+    // then MVS Buddy's sets, then where hand-placed ones are.
     private List<string> PakSources(InstallState state, CopyLayout copy, IEnumerable<string?> homes)
     {
         var sources = new List<string>();
@@ -1666,7 +1669,7 @@ public sealed class GameStates
         }
         string how = live.Source switch
         {
-            ChannelSource.Install => "the buddy installed it",
+            ChannelSource.Install => "MVS Buddy installed it",
             ChannelSource.Person => "as you said",
             _ => "a guess from its server address; if it is the other one, say so before going on, or its saved state is filed under the wrong channel",
         };
@@ -1692,7 +1695,7 @@ public sealed class GameStates
         {
             yield return state.NeedsFirstLaunch
                 ? "The paks are not installed: " + InstallReader.FirstLaunchNote
-                : "The paks are not installed: the buddy cannot tell which Wine prefix this copy runs in.";
+                : "The paks are not installed: MVS Buddy cannot tell which Wine prefix this copy runs in.";
         }
         var comparer = host.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         string? Destination(string? home) => home == null ? state.SavedPaksDirectory : Full(copy, home);
@@ -1708,12 +1711,12 @@ public sealed class GameStates
         if (ovs > 0)
         {
             yield return (ovs == 1 ? "1 pak it does not use is" : $"{ovs} paks it does not use are")
-                + (state.Channel is { } channel ? $" kept with {channel.Channel}, for switching back." : " kept aside in the buddy's folder.");
+                + (state.Channel is { } channel ? $" kept with {channel.Channel}, for switching back." : " kept aside in MVS Buddy's folder.");
         }
         int mvsi = leaving.Count - ovs;
         if (mvsi > 0)
         {
-            yield return $"{mvsi} MVS Infinite {Paks(mvsi)} {(mvsi == 1 ? "is" : "are")} kept aside in the buddy's folder, to put back with it.";
+            yield return $"{mvsi} MVS Infinite {Paks(mvsi)} {(mvsi == 1 ? "is" : "are")} kept aside in MVS Buddy's folder, to put back with it.";
         }
         if (state.PaksInGame.Count > 0)
         {
@@ -1747,7 +1750,7 @@ public sealed class GameStates
     private static bool IsOpenVersusPlugin(InstallState state, string path) =>
         state.Mod.Plugins.Contains(path) || state.Mod.OldLayoutFiles.Contains(path);
 
-    // Ultimate ASI Loader and its license, as the store names them; with onlyOurs, only the copy the buddy's install
+    // Ultimate ASI Loader and its license, as the store names them; with onlyOurs, only the copy MVS Buddy's install
     // record names (by name and checksum), and the license only with it.
     private static List<string> LoaderPaths(InstallState state, CopyLayout copy, bool onlyOurs)
     {
@@ -1785,7 +1788,7 @@ public sealed class GameStates
     private static string Paks(int count) => count == 1 ? "pak" : "paks";
 
     // The defaults of the version installed now, the base of the merge: the settings its release shipped, from the cache
-    // (an install by the buddy names its release), else its own sample_config.toml, else sample.toml at its tag on
+    // (an install by MVS Buddy names its release), else its own sample_config.toml, else sample.toml at its tag on
     // GitHub. Null when none can be had; the merge then judges by the new release's defaults.
     private async Task<string?> InstalledDefaultsAsync(InstallState state, GitStore cacheStore, CancellationToken cancellationToken)
     {

@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace MvsBuddy.App;
 
-/// <summary>The buddy's icon, embedded as a PNG at each size an icon theme takes (<c>icons/&lt;size&gt;.png</c>).</summary>
+/// <summary>MVS buddy's icon, embedded as a PNG at each size an icon theme takes (<c>icons/&lt;size&gt;.png</c>).</summary>
 internal static class Icons
 {
     /// <summary>The icon's bytes by size in pixels.</summary>

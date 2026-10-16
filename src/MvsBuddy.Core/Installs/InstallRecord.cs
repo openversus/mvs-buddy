@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace MvsBuddy.Installs;
 
 /// <summary>
-/// What the buddy wrote down about the OpenVersus it installed: <c>plugins/OpenVersus/mvs-buddy-install.json</c>. It sits
+/// What MVS Buddy wrote down about the OpenVersus it installed: <c>plugins/OpenVersus/mvs-buddy-install.json</c>. It sits
 /// with the mod's own files, so turning the mod off and on, a clean start and undoing an install carry it along with them.
 /// </summary>
 public sealed class InstallRecord
@@ -15,7 +15,7 @@ public sealed class InstallRecord
     /// <summary><c>Prod</c> or <c>Testing</c>.</summary>
     public string Channel { get; set; } = "";
 
-    /// <summary>Who said which channel this is: <c>install</c> (the buddy installed it) or <c>person</c> (they corrected it).</summary>
+    /// <summary>Who said which channel this is: <c>install</c> (MVS Buddy installed it) or <c>person</c> (they corrected it).</summary>
     public string ChannelFrom { get; set; } = "install";
 
     /// <summary>The release's git tag.</summary>
@@ -27,7 +27,7 @@ public sealed class InstallRecord
     /// <summary>When it was installed, or when the person corrected the channel.</summary>
     public DateTimeOffset At { get; set; }
 
-    /// <summary>The buddy's version that wrote this.</summary>
+    /// <summary>MVS Buddy's version that wrote this.</summary>
     public string? Buddy { get; set; }
 
     /// <summary>The release's install zip, as downloaded.</summary>
@@ -42,7 +42,7 @@ public sealed class InstallRecord
     /// <summary>Ultimate ASI Loader as it was installed.</summary>
     public RecordedFile? Loader { get; set; }
 
-    /// <summary>The channel, when the record names one the buddy knows.</summary>
+    /// <summary>The channel, when the record names one MVS Buddy knows.</summary>
     [JsonIgnore]
     public Catalog.Channel? ChannelValue => Enum.TryParse<Catalog.Channel>(Channel, ignoreCase: false, out var c) ? c : null;
 

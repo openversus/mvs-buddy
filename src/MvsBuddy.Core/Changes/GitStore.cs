@@ -24,7 +24,7 @@ internal sealed record Content(string Path, byte[] Bytes) : TreeEdit(Path);
 internal sealed record Removal(string Path) : TreeEdit(Path);
 
 /// <summary>
-/// A bare git repository in the buddy's folder, with a folder as its working tree or none (a cache). It knows paths,
+/// A bare git repository in MVS Buddy's folder, with a folder as its working tree or none (a cache). It knows paths,
 /// trees, branches and tags, not the game: which paths make up a state is the caller's. Each operation opens the
 /// repository and closes it again, so nothing read before (objects, the index) is ever stale.
 /// </summary>
@@ -81,7 +81,7 @@ internal sealed class GitStore
         }
         if (borrowFrom != null)
         {
-            // Relative, so the buddy's folder can move as a whole; libgit2 reads it from the objects folder.
+            // Relative, so MVS Buddy's folder can move as a whole; libgit2 reads it from the objects folder.
             string alternates = Path.Combine(gitDir, "objects", "info", "alternates");
             Directory.CreateDirectory(Path.GetDirectoryName(alternates)!);
             File.WriteAllText(alternates, RelativeFolder(Path.Combine(gitDir, "objects"), Path.Combine(borrowFrom.gitDir, "objects")) + "\n");

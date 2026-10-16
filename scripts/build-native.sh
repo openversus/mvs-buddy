@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds RmlUiFlat's native library (rmlui_c with its desktop window) for the buddy, inside the submodule:
+# Builds RmlUiFlat's native library (rmlui_c with its desktop window) for MVS Buddy, inside the submodule:
 #   scripts/build-native.sh linux     -> external/RmlUiFlat/native/build/linux-sniper/librmlui_c.so
 #   scripts/build-native.sh windows   -> external/RmlUiFlat/native/build/win-desktop/rmlui_c.dll
 # The app bundles whichever its publish target needs (src/MvsBuddy.App/MvsBuddy.App.csproj).

@@ -23,7 +23,7 @@ public sealed class ChangePlanTests : IDisposable
     {
         string pak = tree.File("ovs pak", "profile", "OVS_P.pak");
         string set = tree.Path("data", "paks", "testing");
-        // Only the folder the buddy's own would be made in is refused.
+        // Only the folder MVS Buddy's own would be made in is refused.
         var plan = Plan(folder => folder == tree.Root);
         plan.Move(pak, Path.Combine(set, "OVS_P.pak"));
         plan.Write(Path.Combine(set, "inside", "manifest.json"), [1]);

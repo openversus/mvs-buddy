@@ -64,7 +64,7 @@ public sealed class GameFinder
     /// A folder someone picked, as the place to install, whatever it holds. When it is the game (the install folder, the
     /// <c>MultiVersus</c> folder in it, its <c>Binaries/Win64</c>, or the executable itself) the install is the game's
     /// <c>Win64</c> folder. Otherwise it is the picked folder as it is (the executable's folder, for a file), with
-    /// <see cref="GameInstall.Verified"/> false and the reason in <see cref="GameInstall.UnverifiedReason"/>: the buddy
+    /// <see cref="GameInstall.Verified"/> false and the reason in <see cref="GameInstall.UnverifiedReason"/>: MVS Buddy
     /// says what it could not confirm, and the person decides. Nothing refuses an unverified install.
     /// </summary>
     public GameInstall Choose(string path)
@@ -168,7 +168,7 @@ public sealed class GameFinder
     // otherwise the store is unknown, and on Linux the prefix is the one it sits inside, if any.
     private GameInstall Unlisted(string win64, FoundBy foundBy)
     {
-        // By its real path: a copy reached through a link (~/.steam/steam) is the copy it points at, and the buddy keeps
+        // By its real path: a copy reached through a link (~/.steam/steam) is the copy it points at, and MVS Buddy keeps
         // one set of everything per copy.
         win64 = Directory.Exists(win64) ? host.RealPath(win64) : win64;
         string? library = SteamLibraryOf(win64);

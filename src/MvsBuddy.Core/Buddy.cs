@@ -6,7 +6,7 @@ using MvsBuddy.Installs;
 
 namespace MvsBuddy;
 
-/// <summary>What the buddy can do. Made by <see cref="BuddyBuilder"/>.</summary>
+/// <summary>What MVS Buddy can do. Made by <see cref="BuddyBuilder"/>.</summary>
 public sealed class Buddy : IDisposable
 {
     private readonly HttpClient? ownedHttp;
@@ -47,15 +47,15 @@ public sealed class Buddy : IDisposable
     /// <summary>Every change to a copy of the game (install, switch channel, turn off and on, clean start, put back, uninstall, undo), as states kept in git.</summary>
     public GameStates States { get; }
 
-    /// <summary>What the person has told the buddy about itself.</summary>
+    /// <summary>What the person has told MVS Buddy about itself.</summary>
     public Preferences Preferences { get; }
 
-    /// <summary>The releases fetched so far, kept in a git repository of the buddy's own.</summary>
+    /// <summary>The releases fetched so far, kept in a git repository of MVS Buddy's own.</summary>
     internal ReleaseCache Cache { get; }
 
     /// <summary>The channel paks, kept outside git, a set per channel.</summary>
     internal PakStore Paks { get; }
 
-    /// <summary>Disposes the HTTP client if the buddy made it.</summary>
+    /// <summary>Disposes the HTTP client if MVS Buddy made it.</summary>
     public void Dispose() => ownedHttp?.Dispose();
 }

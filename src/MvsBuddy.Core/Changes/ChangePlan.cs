@@ -86,7 +86,7 @@ public sealed class ChangePlan
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
-                // The change is made; what is left is only in the buddy's own folder, where reading the install reports it.
+                // The change is made; what is left is only in MVS Buddy's own folder, where reading the install reports it.
                 log.LogWarning(e, "Could not delete {Folder} after the change", folder);
             }
         }

@@ -4,7 +4,7 @@ using MvsBuddy.Games;
 
 namespace MvsBuddy.Installs;
 
-/// <summary>Whose a file the game did not ship is, as far as the buddy can tell.</summary>
+/// <summary>Whose a file the game did not ship is, as far as MVS Buddy can tell.</summary>
 public enum ExtraKind
 {
     /// <summary>OpenVersus: its plugin and files, its paks.</summary>
@@ -72,11 +72,11 @@ public sealed class StockCheck
         }
         if (!state.Game.Verified)
         {
-            return "This folder is not recognisably the game, so the buddy cannot tell where the game's folder starts.";
+            return "This folder is not recognisably the game, so MVS Buddy cannot tell where the game's folder starts.";
         }
         string root = Root(state);
         return Directory.Exists(root) && Directory.EnumerateFiles(root, "Manifest_*.txt").Any() ? null
-            : "This copy has no Manifest_*.txt files, so the buddy cannot tell the game's own files from added ones.";
+            : "This copy has no Manifest_*.txt files, so MVS Buddy cannot tell the game's own files from added ones.";
     }
 
     // The game's install folder (Steam's steamapps/common/MultiVersus).
@@ -105,7 +105,7 @@ public sealed class StockCheck
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
             log.LogWarning(e, "Could not read the manifests in {Root}", root);
-            return new StockReport(root, false, [], [], [$"The game's Manifest_*.txt files could not be read ({e.Message}), so the buddy cannot tell the game's own files from added ones."]);
+            return new StockReport(root, false, [], [], [$"The game's Manifest_*.txt files could not be read ({e.Message}), so MVS Buddy cannot tell the game's own files from added ones."]);
         }
 
 
